@@ -1,0 +1,18 @@
+{
+  // Typecheck-only view of the node side: the same options as the build, plus
+  // the test files and the root config files. rootDir widens to the repo root
+  // because tests live outside src/, and nothing is emitted.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": [
+    "src/cli/**/*.ts",
+    "src/lib/**/*.ts",
+    "test/**/*.ts",
+    "*.config.ts"
+  ]
+}

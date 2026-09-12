@@ -1,0 +1,23 @@
+{
+  // The browser bundle. Vite emits it, so this config only typechecks.
+  // moduleResolution "bundler" is what lets the page import
+  // "@tldraw/assets/imports.vite", which has no package "exports" entry and
+  // no extension in the specifier.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/page/**/*.ts", "src/page/**/*.tsx"]
+}
