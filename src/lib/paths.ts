@@ -88,3 +88,25 @@ export function tempSiblingPath(target: string, suffix: string = ""): string {
   const unique = `${process.pid.toString(36)}-${randomUUID()}${suffix}`;
   return path.join(dir, `.${base}.${unique}.tmp`);
 }
+
+/**
+ * Where an `--shot`, `--svg` or `-o` argument lands.
+ *
+ * The same resolution as a `.tldr` path, under its own name because the two
+ * have different rules about existing: a source file has to be there already
+ * and an output file must not be assumed to be.
+ */
+export function resolveOutputPath(input: string, cwd: string = process.cwd()): string {
+  return path.resolve(cwd, input);
+}
+
+/**
+ * The throwaway file `doctor`'s write-access check creates.
+ *
+ * In the working directory rather than the system temp directory, because the
+ * question the check answers is "can this tool save a diagram where the caller
+ * is standing", and `/tmp` being writable says nothing about that.
+ */
+export function doctorProbePath(cwd: string = process.cwd()): string {
+  return path.join(cwd, `.tldrawkc-write-check-${randomUUID()}`);
+}

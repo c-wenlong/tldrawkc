@@ -9,9 +9,9 @@ This file is the operating manual. [README.md](README.md) says what the tool
 is for; the design docs it is built from live in the self-learn repo (see
 "Where the design lives" below).
 
-**Status: phase 0.** The package builds, tests and runs `doctor`. The drawing
-verbs are specified but not written yet. `tldrawkc help` lists which phase
-brings each one.
+**Status: phase 1.** `new`, `run`, `shot` and `doctor` work. `inspect`,
+`export`, `from-mermaid` and `serve` are specified and not written yet;
+`tldrawkc help` lists which phase brings each one.
 
 ## What lives where
 
@@ -22,7 +22,10 @@ brings each one.
 | `src/cli/args.ts` | `parseCommand(argv, env)`, pure: no printing, no exiting, no throwing. Returns a parsed command or an error string |
 | `src/lib/paths.ts` | every path the tool computes. Nothing else builds one |
 | `src/lib/files.ts` | every file write, all atomic (temp sibling, then rename) |
-| `src/lib/browser.ts` | `resolveChromium()` today; launching the page and waiting for the bridge in phase 1 |
+| `src/lib/browser.ts` | resolving Chromium, opening the page, the typed wrapper over every bridge call, and `withCanvas` |
+| `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port |
+| `src/lib/canvas.ts` | one function per verb: `run`, `shot`, `newDocument`. Takes data, returns data |
+| `src/lib/errors.ts` | the failures the tool raises on purpose, each carrying its exit code |
 | `src/lib/doctor.ts` | the environment checks, as data |
 | `src/lib/index.ts` | the public API, what `exports["."]` points at |
 | `src/page/` | the Vite app: `<Tldraw>`, the bridge, and (from phase 1) the helpers bag, mermaid importer and lint pass |
@@ -38,7 +41,7 @@ npm run build          # tsc for src/cli and src/lib, vite for src/page
 npm run lint
 npm run typecheck
 npm test               # unit
-npm run test:e2e       # needs a Chromium; see below
+npm run test:e2e       # needs a Chromium and a build; see below
 node dist/cli/index.js doctor
 ```
 
@@ -90,6 +93,58 @@ install chromium` resolves the local copy and fetches the browser revision
 `playwright-core` expects, instead of whatever the registry serves that day.
 Bump the two together or not at all.
 
+## Verbs
+
+Every verb is one function in `src/lib/canvas.ts` that takes an options object
+and returns a result object. None of them print, none of them exit, and none
+of them open a browser directly. They all have the same shape:
+
+```ts
+export async function run(options: RunOptions): Promise<RunResult> {
+  // 1. Resolve paths and read the document. A missing file without --create
+  //    is a UsageError here, before anything is launched.
+  // 2. withCanvas(...) for everything that needs the page.
+  // 3. Return data. The CLI decides what to print and what to exit with.
+}
+```
+
+`withCanvas(options, fn)` starts the page server, opens the page, waits for the
+bridge, runs `fn`, and closes the browser and the server in a `finally`. That
+is layering rule 7 in one function: no verb has its own cleanup to forget, and
+a snippet that hangs still leaves a clean process behind. Add a verb by adding
+a function that calls it, never by calling `openCanvasPage` yourself.
+
+Inside `fn`, the order for anything that writes is fixed:
+
+1. Check the bridge implements what this verb needs (`canvas.has(...)`), so a
+   page bundle older than the command says so in one line.
+2. `load`, then `setPage` when `--page` was given.
+3. `exec`, bounded by `--timeout`.
+4. `save`, through `files.ts`.
+5. Export, last.
+
+Save before export is the reason exit 4 exists as its own code: a broken export
+costs a picture, never the work.
+
+### Exit codes
+
+A failure is one of the classes in `src/lib/errors.ts` and carries its own
+code, so `src/cli/index.ts` reads a property instead of matching on message
+text. Never throw a bare `Error` out of `src/lib/` for something a caller could
+act on.
+
+| Class | Code | Raised when |
+| --- | --- | --- |
+| `UsageError` | 1 | Bad arguments, a missing file, a flag that contradicts another, an unknown `--page` |
+| `EnvironmentError` | 1 | No Chromium, the page never answered, the bridge is missing a function, the snippet ran past `--timeout` |
+| `ChromiumNotFoundError` | 1 | No usable browser (a subclass in `browser.ts`, because it carries the list of paths it tried) |
+| `SnippetError` | 2 | The snippet threw. The page rolled back and nothing was written. |
+| `ExportError` | 4 | The PNG or SVG failed after the document was saved |
+
+Exit 3 is not an error. The command succeeded, so `run` returns normally with
+its `lints` list and an `exitCode` of 3, and `--allow-lints` turns that into 0.
+The file is saved either way, because the work is real.
+
 ## Layering rules
 
 The full list is in the design docs. The ones that bite:
@@ -106,7 +161,8 @@ The full list is in the design docs. The ones that bite:
    from one call.
 4. **Nothing outside `src/lib/paths.ts` builds a path.**
 5. **Every file write is atomic** and goes through `src/lib/files.ts`.
-6. **A command never leaves a browser running.** Close it in a `finally`.
+6. **A command never leaves a browser running.** `withCanvas` is the only
+   place that opens one, and it closes it in a `finally`.
 7. **No network access at runtime.** The page bundle is self-contained, fonts
    included.
 
@@ -238,4 +294,8 @@ arrangement `manimkc/` has. That means:
   (`playwright-core`) and that is the point.
 - Add a unit test for anything in `src/lib` or `src/cli`. The page is checked
   end to end, by looking at what it drew.
+- `test/e2e/node-side.test.ts` drives the library against the stand-in bridge
+  in `test/e2e/fixtures/stand-in-page/`, which answers the bridge contract
+  without tldraw. Use it for anything Node decides, and keep it a stand-in: the
+  moment it starts emulating tldraw it stops telling you anything.
 - No em dashes in prose. Commas, colons, or two sentences.
