@@ -28,6 +28,7 @@ import { toShapeId } from "./helpers/ids.js";
 import { describeEditor, lintPage, type InspectResult } from "./helpers/read.js";
 import type { Lint } from "./helpers/lints.js";
 import { createHelpers, type Helpers } from "./helpers/index.js";
+import { snippetFailureReport, taggedSnippetSource } from "./helpers/stack.js";
 
 export type { InspectShape, InspectBinding, InspectResult } from "./helpers/read.js";
 
@@ -144,23 +145,6 @@ function jsonSafe(value: unknown): unknown {
   const text = JSON.stringify(value);
   if (text === undefined) return null;
   return JSON.parse(text) as unknown;
-}
-
-/**
- * Fold an error's stack into its message.
- *
- * Playwright carries an error's `message` across the bridge but not much else,
- * so the line number the snippet failed on has to travel inside the message or
- * it is lost. The stack's own first line repeats the message, so drop it.
- */
-function withStack(error: Error): string {
-  const stack = error.stack;
-  if (!stack) return error.message;
-  const lines = stack.split("\n");
-  const head = lines[0] ?? "";
-  const body = head.includes(error.message) ? lines.slice(1) : lines;
-  const trimmed = body.join("\n").trimEnd();
-  return trimmed.length > 0 ? `${error.message}\n${trimmed}` : error.message;
 }
 
 function shapeRects(editor: Editor, ids: readonly TLShapeId[]): Rect[] {
@@ -293,7 +277,14 @@ export function installBridge(editor: Editor): Bridge {
       // snippet drew from one it was handed.
       beginExec();
       try {
-        const run = new AsyncFunction("editor", "helpers", "tldraw", source);
+        // Tagged, so the frames the snippet owns are the ones `stack.ts`
+        // renumbers and playwright's own anonymous frames are left alone.
+        const run = new AsyncFunction(
+          "editor",
+          "helpers",
+          "tldraw",
+          taggedSnippetSource(source),
+        );
         const result = await run(editor, helpers, tldrawModule);
         return { result: jsonSafe(result), lints: lints(), shapeCount: shapeCount() };
       } catch (cause) {
@@ -302,7 +293,7 @@ export function installBridge(editor: Editor): Bridge {
         // `.tldr` on disk is never written from a half-applied change.
         editor.bailToMark(mark);
         const error = cause instanceof Error ? cause : new Error(String(cause));
-        const wrapped = new Error(withStack(error));
+        const wrapped = new Error(snippetFailureReport(error.message, error.stack, source));
         wrapped.name = "SnippetError";
         throw wrapped;
       }

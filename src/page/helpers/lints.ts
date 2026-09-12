@@ -8,9 +8,9 @@
  * which is where the browser's own text measurement happens, is
  * `collectLintRecords` in `helpers/read.ts`.
  *
- * All six rules from HELPERS.md live here: `friendless-arrow`,
+ * All seven rules live here: the six from HELPERS.md (`friendless-arrow`,
  * `overlapping-text`, `overlapping-shapes`, `off-page`, `empty-label` and
- * `unreadable-label`.
+ * `unreadable-label`) plus `arrow-crosses-shape`, which phase 3 adds.
  */
 
 import type { Rect } from "./geometry.js";
@@ -45,6 +45,27 @@ export interface LintShape {
   text?: string;
   /** The geo kind (`rectangle`, `diamond`, ...). Geo shapes only. */
   geo?: string;
+  /**
+   * The shape this one hangs off: a page, a frame, or a container. Read by
+   * `arrow-crosses-shape`, which exempts an arrow from the shape it lives in.
+   */
+  parentId?: string;
+  /**
+   * The arrow's rendered path in page coordinates, as the vertices tldraw's
+   * own geometry reports: the two ends of a straight arrow, the corners of an
+   * elbow route, or an arc sampled into a polyline. Arrows only, and absent
+   * when the geometry could not be read.
+   */
+  points?: readonly { x: number; y: number }[];
+  /**
+   * The shape's own rendered outline in page coordinates, again from tldraw's
+   * geometry: four corners for a rectangle, four for a diamond, an ellipse
+   * sampled into a polygon. `arrow-crosses-shape` prefers this to `bounds`,
+   * because a diamond's page box has four empty corners an arrow can pass
+   * through without touching the shape. Absent means fall back to `bounds`,
+   * which is right whenever the shape is a rectangle.
+   */
+  outline?: readonly { x: number; y: number }[];
   /** The fill style (`none`, `solid`, ...). Geo shapes only. */
   fill?: string;
   /**
@@ -81,6 +102,7 @@ export interface LintBinding {
 /** Every rule name, in the order {@link runLints} runs them. */
 export const LINT_RULES = [
   "friendless-arrow",
+  "arrow-crosses-shape",
   "overlapping-text",
   "overlapping-shapes",
   "off-page",
@@ -114,6 +136,25 @@ export const OFF_PAGE_LIMIT = 10000;
  * a tenth of the smaller one is a collision.
  */
 export const OVERLAP_AREA_FRACTION = 0.1;
+
+/**
+ * How far inside a shape an arrow has to run before `arrow-crosses-shape`
+ * fires, in page units.
+ *
+ * An arrow that touches a box is not the same thing as an arrow that runs
+ * through it, and the difference is about the width of the ink. tldraw draws a
+ * size `m` shape at a stroke width of 3.5 page units, so the arrow's own half
+ * stroke plus the box outline's half stroke is 3.5 units of overlap before a
+ * reader sees anything but two lines meeting. 4 is that, rounded up, and it
+ * also absorbs the error in sampling an arc: the rule walks the arc as a
+ * polyline, so a chord can cut a corner the curve itself clears.
+ *
+ * It is a threshold on depth, not on length: the shape's outline is eroded by
+ * this much and the arrow has to cross what is left. Anything larger starts
+ * hiding a real crossing of a small box, which is the finding this rule exists
+ * for.
+ */
+export const ARROW_CROSSING_TOLERANCE = 4;
 
 /** Slack on `unreadable-label`, in page units, to absorb sub-pixel measurement. */
 const LABEL_WIDTH_TOLERANCE = 1;
@@ -183,6 +224,421 @@ export function friendlessArrows(
       shapeIds: [shape.id],
       message: `arrow ${shape.id} has no binding at its ${loose.join(" or ")}`,
     });
+  }
+  return lints;
+}
+
+/**
+ * Shrink a rectangle by `inset` on every side, or `null` when nothing is left.
+ *
+ * A box thinner than twice the tolerance has no interior worth talking about,
+ * and an arrow cannot meaningfully run "through" it, so it drops out rather
+ * than becoming a rectangle with negative sides.
+ */
+export function insetRect(rect: Rect, inset: number): Rect | null {
+  const w = rect.w - inset * 2;
+  const h = rect.h - inset * 2;
+  if (w <= 0 || h <= 0) return null;
+  return { x: rect.x + inset, y: rect.y + inset, w, h };
+}
+
+/**
+ * Does the segment `a`-`b` share any length with the rectangle?
+ *
+ * Liang and Barsky's clip, which is the cheap way to ask this without a case
+ * per edge: each of the four half-planes narrows the parameter range the
+ * segment is allowed to keep, and whatever survives all four is the part
+ * inside. `t1 > t0` rather than `>=`, so a segment that only runs along an
+ * edge, or touches a corner, is not inside anything.
+ *
+ * A segment wholly inside the rectangle keeps its whole range and so counts,
+ * which is the case that matters for an elbow arrow whose corner lands in a
+ * box it never leaves.
+ */
+export function clipSegmentToRect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  rect: Rect,
+): { t0: number; t1: number } | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+
+  const clip = (p: number, q: number): boolean => {
+    // Parallel to this pair of edges. `> 0` and not `>= 0`, so a segment lying
+    // exactly along an edge has no depth inside and is not a crossing.
+    if (p === 0) return q > 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  };
+
+  if (!clip(-dx, a.x - rect.x)) return null;
+  if (!clip(dx, rect.x + rect.w - a.x)) return null;
+  if (!clip(-dy, a.y - rect.y)) return null;
+  if (!clip(dy, rect.y + rect.h - a.y)) return null;
+  return t1 > t0 ? { t0, t1 } : null;
+}
+
+/** {@link clipSegmentToRect}, when only the yes or no is wanted. */
+export function segmentCrossesRect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  rect: Rect,
+): boolean {
+  return clipSegmentToRect(a, b, rect) !== null;
+}
+
+/** A point, in page coordinates. */
+interface Point {
+  x: number;
+  y: number;
+}
+
+/**
+ * How far apart the samples are when walking a leg through a concave shape, in
+ * page units.
+ *
+ * Half the tolerance, so the error only ever runs one way. A sample that
+ * reports as deep really is a point on the arrow that is really that far inside
+ * the shape, so sampling can never invent a crossing; all it can do is miss one
+ * whose deepest point is barely past the threshold, because the deepest point
+ * fell between two samples. Missing a crossing four units deep costs a nudge,
+ * and inventing one costs a working diagram an exit code of 3, so that is the
+ * direction to be wrong in.
+ */
+const CROSSING_SAMPLE_STEP = ARROW_CROSSING_TOLERANCE / 2;
+
+/**
+ * Last-resort ceiling on the samples one leg contributes.
+ *
+ * Not the thing that keeps the walk cheap: the leg is cut down to the part
+ * inside the shape's own page box before it is ever sampled, and anything
+ * outside that box cannot be inside the shape, so the span walked is at most
+ * the box's diagonal however long the arrow is. At the spacing above that is
+ * a few hundred samples for any shape a person would draw, and the ceiling
+ * only bites on a shape thousands of units across, which `off-page` is already
+ * complaining about.
+ */
+const MAX_CROSSING_SAMPLES = 4096;
+
+/**
+ * Is this polygon convex, taking its points in the order they are given?
+ *
+ * Decides which of the two crossing tests a shape gets. Every geo this tool
+ * actually draws is convex, and the exact test below is only exact for those.
+ * Collinear points count as convex, since a repeated or in-line vertex is not
+ * a turn in either direction.
+ */
+export function isConvexPolygon(points: readonly Point[]): boolean {
+  const n = points.length;
+  if (n < 3) return false;
+  let sign = 0;
+  for (let i = 0; i < n; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    const c = points[(i + 2) % n];
+    if (!a || !b || !c) return false;
+    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (cross === 0) continue;
+    const turn = cross > 0 ? 1 : -1;
+    if (sign === 0) sign = turn;
+    else if (turn !== sign) return false;
+  }
+  return sign !== 0;
+}
+
+/**
+ * Does the segment `a`-`b` reach more than `inset` inside the convex polygon?
+ *
+ * The same parametric clip as {@link segmentCrossesRect}, generalised from
+ * four axis-aligned half-planes to one per edge, each pushed `inset` inward.
+ * For a convex polygon that intersection is exactly the polygon eroded by
+ * `inset`, so "more than four units inside the shape" is the literal question
+ * being asked rather than an approximation of it. With an axis-aligned
+ * rectangle and the same inset it agrees with `segmentCrossesRect` exactly.
+ *
+ * Inward is decided against the polygon's own centroid rather than assumed
+ * from the winding order, so a polygon that comes back clockwise is not read
+ * inside out.
+ */
+export function segmentCrossesConvex(
+  a: Point,
+  b: Point,
+  polygon: readonly Point[],
+  inset: number,
+): boolean {
+  if (polygon.length < 3) return false;
+
+  let cx = 0;
+  let cy = 0;
+  for (const point of polygon) {
+    cx += point.x;
+    cy += point.y;
+  }
+  const centre = { x: cx / polygon.length, y: cy / polygon.length };
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+
+  for (let i = 0; i < polygon.length; i++) {
+    const from = polygon[i];
+    const to = polygon[(i + 1) % polygon.length];
+    if (!from || !to) return false;
+
+    let nx = -(to.y - from.y);
+    let ny = to.x - from.x;
+    const length = Math.hypot(nx, ny);
+    // A repeated vertex contributes no edge and no constraint.
+    if (length === 0) continue;
+    nx /= length;
+    ny /= length;
+    if (nx * (centre.x - from.x) + ny * (centre.y - from.y) < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+
+    // How far inside this edge the segment starts, and how fast that changes.
+    const q = nx * (a.x - from.x) + ny * (a.y - from.y) - inset;
+    const p = nx * dx + ny * dy;
+    if (p === 0) {
+      // Parallel to this edge. Strictly, so a segment lying exactly on the
+      // eroded boundary has no depth inside and is not a crossing.
+      if (q <= 0) return false;
+      continue;
+    }
+    const r = -q / p;
+    if (p > 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+  }
+  return t1 > t0;
+}
+
+/** Is the point inside the polygon? A ray cast, so a concave one is fine. */
+export function pointInPolygon(point: Point, polygon: readonly Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (!a || !b) continue;
+    if (a.y > point.y !== b.y > point.y) {
+      const x = ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
+      if (point.x < x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Shortest distance from the point to any edge of the polygon. */
+export function distanceToPolygon(point: Point, polygon: readonly Point[]): number {
+  let best = Infinity;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (!a || !b) continue;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const squared = dx * dx + dy * dy;
+    const t =
+      squared === 0 ? 0 : Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / squared));
+    best = Math.min(best, Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy)));
+  }
+  return best;
+}
+
+/**
+ * Does the segment `a`-`b` reach more than `depth` inside the polygon, with no
+ * assumption that the polygon is convex?
+ *
+ * For `star`, `cloud` and `heart`, the three geos tldraw draws with notches in
+ * them, where eroding by half-planes would fill the notches in and report an
+ * arrow that passed through empty space. Walks the segment and asks each sample
+ * whether it is inside and far enough from the outline. See
+ * {@link CROSSING_SAMPLE_STEP} for why the sampling error is safe, and
+ * {@link MAX_CROSSING_SAMPLES} for why callers hand it the part of a leg that
+ * is near the shape rather than the whole thing.
+ */
+export function segmentReachesInside(
+  a: Point,
+  b: Point,
+  polygon: readonly Point[],
+  depth: number,
+): boolean {
+  if (polygon.length < 3) return false;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const steps = Math.min(
+    MAX_CROSSING_SAMPLES,
+    Math.max(1, Math.ceil(Math.hypot(dx, dy) / CROSSING_SAMPLE_STEP)),
+  );
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const point = { x: a.x + dx * t, y: a.y + dy * t };
+    if (!pointInPolygon(point, polygon)) continue;
+    if (distanceToPolygon(point, polygon) > depth) return true;
+  }
+  return false;
+}
+
+/** Does any leg of a path run through the rectangle? */
+function pathCrossesRect(
+  points: readonly { x: number; y: number }[],
+  rect: Rect,
+): boolean {
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) continue;
+    if (segmentCrossesRect(a, b, rect)) return true;
+  }
+  return false;
+}
+
+/**
+ * Does any leg of a path reach more than `inset` inside the outline?
+ *
+ * Two tests, picked per shape rather than per repo: the exact half-plane
+ * erosion when the outline is convex, which is every geo this tool draws, and
+ * the sampled walk when it is not, which is `star`, `cloud` and `heart`.
+ */
+function pathReachesInside(
+  points: readonly Point[],
+  outline: readonly Point[],
+  convex: boolean,
+  box: Rect,
+  inset: number,
+): boolean {
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) continue;
+    if (convex) {
+      if (segmentCrossesConvex(a, b, outline, inset)) return true;
+      continue;
+    }
+    // Cut the leg down to the part that is inside the shape's eroded page box
+    // before sampling it. The outline sits inside that box and erosion only
+    // shrinks it further, so nothing more than `inset` inside the shape can lie
+    // outside the clipped span: the walk loses nothing and its spacing stops
+    // depending on how long the arrow is.
+    const span = clipSegmentToRect(a, b, box);
+    if (!span) continue;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const from = { x: a.x + dx * span.t0, y: a.y + dy * span.t0 };
+    const to = { x: a.x + dx * span.t1, y: a.y + dy * span.t1 };
+    if (segmentReachesInside(from, to, outline, inset)) return true;
+  }
+  return false;
+}
+
+/**
+ * `arrow-crosses-shape`: an arrow drawn straight through something it has
+ * nothing to do with.
+ *
+ * The failure this catches is the one a reader hits first and the other rules
+ * all miss: a long arrow between two distant boxes routed over the top of the
+ * six boxes in between, so the picture reads as seven connections instead of
+ * one. `overlapping-shapes` skips arrows on purpose, because an arrow touching
+ * a box is how arrows work; this rule is about the shapes an arrow touches
+ * that are not its own.
+ *
+ * Exempt: the two shapes the arrow is bound to, since arriving at them is the
+ * point; a container (`meta.container`), since arrows are expected to cross
+ * into and out of a group; the arrow's own parent, for the same reason on a
+ * frame; and either shape carrying this rule in `meta.lintIgnore`. Only geo
+ * and note shapes count as something to run through, because a text shape has
+ * no outline for a line to disappear behind.
+ *
+ * The test is against the shape's own outline and not against its page box: a
+ * diamond's box has four empty corners, and an arrow routed through one of them
+ * touches nothing. A convex outline, which is every geo this tool draws, is
+ * eroded exactly; a concave one (`star`, `cloud`, `heart`) is walked by
+ * sampling instead, so an arrow threaded through a star's notch stays silent
+ * rather than costing a working diagram an exit code of 3. The page box is
+ * still the first thing checked, because it rejects almost every pair in one
+ * comparison and anything it rejects the outline would reject too.
+ *
+ * See {@link ARROW_CROSSING_TOLERANCE} for how far in is far enough.
+ */
+export function arrowCrossesShape(
+  shapes: readonly LintShape[],
+  bindings: readonly LintBinding[],
+): Lint[] {
+  const boundTo = new Map<string, Set<string>>();
+  for (const binding of bindings) {
+    if (binding.type !== "arrow") continue;
+    let bound = boundTo.get(binding.fromId);
+    if (!bound) {
+      bound = new Set<string>();
+      boundTo.set(binding.fromId, bound);
+    }
+    bound.add(binding.toId);
+  }
+
+  const crossable = shapes.filter(
+    (shape) =>
+      (shape.type === "geo" || shape.type === "note") &&
+      shape.bounds !== undefined &&
+      !isContainer(shape) &&
+      !isLintIgnored(shape, "arrow-crosses-shape"),
+  );
+
+  // Convexity once per candidate, not once per arrow and candidate: a page with
+  // seventy arrows would otherwise walk the same thirty outlines seventy times
+  // over to ask the same question.
+  const convex = new Map<string, boolean>();
+  for (const shape of crossable) {
+    const outline = shape.outline;
+    if (!outline || outline.length < 3) continue;
+    convex.set(shape.id, isConvexPolygon(outline));
+  }
+
+  const lints: Lint[] = [];
+  for (const arrow of shapes) {
+    if (arrow.type !== "arrow") continue;
+    const points = arrow.points;
+    if (!points || points.length < 2) continue;
+    if (isLintIgnored(arrow, "arrow-crosses-shape")) continue;
+    const bound = boundTo.get(arrow.id);
+    for (const shape of crossable) {
+      if (shape.id === arrow.id) continue;
+      if (bound?.has(shape.id) === true) continue;
+      if (arrow.parentId !== undefined && arrow.parentId === shape.id) continue;
+      const bounds = shape.bounds;
+      if (!bounds) continue;
+      const inner = insetRect(bounds, ARROW_CROSSING_TOLERANCE);
+      if (!inner) continue;
+      if (!pathCrossesRect(points, inner)) continue;
+      const outline = shape.outline;
+      const isConvex = convex.get(shape.id);
+      if (
+        outline !== undefined &&
+        isConvex !== undefined &&
+        !pathReachesInside(points, outline, isConvex, inner, ARROW_CROSSING_TOLERANCE)
+      ) {
+        continue;
+      }
+      lints.push({
+        rule: "arrow-crosses-shape",
+        shapeIds: [arrow.id, shape.id],
+        message: `arrow ${arrow.id} passes through ${shape.id}, which is neither shape it connects`,
+      });
+    }
   }
   return lints;
 }
@@ -356,6 +812,7 @@ export function runLints(
 ): Lint[] {
   return [
     ...friendlessArrows(shapes, bindings),
+    ...arrowCrossesShape(shapes, bindings),
     ...overlappingText(shapes),
     ...overlappingShapes(shapes),
     ...offPage(shapes),

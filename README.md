@@ -78,10 +78,10 @@ One Node program and one browser page. Every command launches headless
 Chromium, loads a `.tldr` file into a live tldraw editor, runs a JavaScript
 snippet against it with a `helpers` bag in scope, saves the file, and
 optionally writes a PNG or an SVG. The agent reads the PNG with its own image
-tooling and sends the next snippet. A lint pass flags the two things that go
-wrong with generated diagrams, overlapping shapes and arrows pointing at
-nothing, and makes them a non-zero exit code so nobody declares the drawing
-finished without looking. There is no daemon, no sync server, and no React in
+tooling and sends the next snippet. A lint pass flags the things that go wrong
+with generated diagrams, overlapping shapes, arrows pointing at nothing and
+arrows drawn through boxes they have nothing to do with, and makes them a
+non-zero exit code so nobody declares the drawing finished without looking. There is no daemon, no sync server, and no React in
 the dependency tree of whatever repo installs this.
 
 ## Install
@@ -160,6 +160,37 @@ tldrawkc from-mermaid map.tldr --source learn/map.mmd --shot /tmp/map.png
 Without `--append` the document must not already exist, so a canvas someone has
 since fixed by hand is never overwritten. Any line the parser cannot read is
 reported, in the result and on stderr, and never silently dropped.
+
+### The lint pass
+
+`run`, `inspect` and `from-mermaid` all report it, and a non-empty list is exit
+code 3. Seven rules:
+
+| Rule | Fires when |
+| --- | --- |
+| `friendless-arrow` | An arrow has no binding at one or both ends |
+| `arrow-crosses-shape` | An arrow's rendered path runs through a geo or note shape that is neither of the two it connects |
+| `overlapping-text` | Two text-bearing shapes' label boxes intersect |
+| `overlapping-shapes` | Two shapes intersect by more than a tenth of the smaller one's area |
+| `off-page` | A shape sits further than 10000 page units from the origin |
+| `empty-label` | A geo shape has no text and no fill, so it renders as an unexplained outline |
+| `unreadable-label` | The widest unbreakable run of a label is wider than the room the shape gives it |
+
+`meta.lintIgnore` on a shape mutes a rule for it: an array of rule names, or
+`true` for all of them. `helpers.stub` sets it, which is the only reason a
+decorative line pointing at nothing survives the pass. A container drawn by
+`helpers.boxShapes` carries `meta.container` and is exempt from
+`overlapping-shapes`, `empty-label` and `arrow-crosses-shape`, because covering
+its members and being crossed by arrows is what a container is for.
+
+`arrow-crosses-shape` reads tldraw's own geometry on both sides, so an elbow
+route is tested leg by leg, an arc as the polyline tldraw samples it into, and a
+diamond as a diamond rather than as the page box whose four corners it leaves
+empty. A shape counts as crossed only once the line is more than 4 page units
+inside its outline, which is about the combined width of the two strokes: an
+arrow that touches a box is two lines meeting, not a line disappearing behind
+one. A concave geo (`star`, `cloud`, `heart`) is walked by sampling rather than
+eroded, so an arrow threaded through a star's notch stays quiet.
 
 ### The helper reference
 
