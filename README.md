@@ -189,7 +189,8 @@ diamond as a diamond rather than as the page box whose four corners it leaves
 empty. A shape counts as crossed only once the line is more than 4 page units
 inside its outline, which is about the combined width of the two strokes: an
 arrow that touches a box is two lines meeting, not a line disappearing behind
-one.
+one. A concave geo (`star`, `cloud`, `heart`) is walked by sampling rather than
+eroded, so an arrow threaded through a star's notch stays quiet.
 
 ### The helper reference
 

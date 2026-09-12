@@ -294,43 +294,46 @@ interface Point {
 }
 
 /**
- * The convex hull of a set of points, anticlockwise, by Andrew's monotone
- * chain.
+ * How far apart the samples are when walking a leg through a concave shape, in
+ * page units.
  *
- * The hull rather than the outline itself, because {@link segmentCrossesHull}
- * erodes a shape by intersecting one half-plane per edge, and that is only the
- * true inward offset when the polygon is convex. Every geo tldraw can draw
- * that this tool produces is convex: a rectangle, a diamond, an oval, an
- * ellipse, a hexagon. The three that are not, `star`, `cloud` and `heart`, are
- * judged on their silhouette instead, so an arrow threaded through a star's
- * notch is reported. That over-reports on a shape nothing here draws, and it
- * is still far closer than the page box, whose corners a diamond leaves
- * completely empty.
+ * Half the tolerance, so the error only ever runs one way. A sample that
+ * reports as deep really is a point on the arrow that is really that far inside
+ * the shape, so sampling can never invent a crossing; all it can do is miss one
+ * whose deepest point is barely past the threshold, because the deepest point
+ * fell between two samples. Missing a crossing four units deep costs a nudge,
+ * and inventing one costs a working diagram an exit code of 3, so that is the
+ * direction to be wrong in.
  */
-export function convexHull(points: readonly Point[]): Point[] {
-  const sorted = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-  if (sorted.length < 3) return sorted;
+const CROSSING_SAMPLE_STEP = ARROW_CROSSING_TOLERANCE / 2;
 
-  const cross = (o: Point, a: Point, b: Point): number =>
-    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+/** Ceiling on the samples one leg contributes, so a very long arrow stays cheap. */
+const MAX_CROSSING_SAMPLES = 256;
 
-  const half = (input: readonly Point[]): Point[] => {
-    const chain: Point[] = [];
-    for (const point of input) {
-      while (chain.length >= 2) {
-        const a = chain[chain.length - 2];
-        const b = chain[chain.length - 1];
-        if (!a || !b || cross(a, b, point) > 0) break;
-        chain.pop();
-      }
-      chain.push(point);
-    }
-    chain.pop();
-    return chain;
-  };
-
-  const hull = [...half(sorted), ...half([...sorted].reverse())];
-  return hull.length >= 3 ? hull : sorted;
+/**
+ * Is this polygon convex, taking its points in the order they are given?
+ *
+ * Decides which of the two crossing tests a shape gets. Every geo this tool
+ * actually draws is convex, and the exact test below is only exact for those.
+ * Collinear points count as convex, since a repeated or in-line vertex is not
+ * a turn in either direction.
+ */
+export function isConvexPolygon(points: readonly Point[]): boolean {
+  const n = points.length;
+  if (n < 3) return false;
+  let sign = 0;
+  for (let i = 0; i < n; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    const c = points[(i + 2) % n];
+    if (!a || !b || !c) return false;
+    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (cross === 0) continue;
+    const turn = cross > 0 ? 1 : -1;
+    if (sign === 0) sign = turn;
+    else if (turn !== sign) return false;
+  }
+  return sign !== 0;
 }
 
 /**
@@ -344,33 +347,33 @@ export function convexHull(points: readonly Point[]): Point[] {
  * rectangle and the same inset it agrees with `segmentCrossesRect` exactly.
  *
  * Inward is decided against the polygon's own centroid rather than assumed
- * from the winding order, so a hull that comes back clockwise is not read
+ * from the winding order, so a polygon that comes back clockwise is not read
  * inside out.
  */
-export function segmentCrossesHull(
+export function segmentCrossesConvex(
   a: Point,
   b: Point,
-  hull: readonly Point[],
+  polygon: readonly Point[],
   inset: number,
 ): boolean {
-  if (hull.length < 3) return false;
+  if (polygon.length < 3) return false;
 
   let cx = 0;
   let cy = 0;
-  for (const point of hull) {
+  for (const point of polygon) {
     cx += point.x;
     cy += point.y;
   }
-  const centre = { x: cx / hull.length, y: cy / hull.length };
+  const centre = { x: cx / polygon.length, y: cy / polygon.length };
 
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   let t0 = 0;
   let t1 = 1;
 
-  for (let i = 0; i < hull.length; i++) {
-    const from = hull[i];
-    const to = hull[(i + 1) % hull.length];
+  for (let i = 0; i < polygon.length; i++) {
+    const from = polygon[i];
+    const to = polygon[(i + 1) % polygon.length];
     if (!from || !to) return false;
 
     let nx = -(to.y - from.y);
@@ -406,6 +409,70 @@ export function segmentCrossesHull(
   return t1 > t0;
 }
 
+/** Is the point inside the polygon? A ray cast, so a concave one is fine. */
+export function pointInPolygon(point: Point, polygon: readonly Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (!a || !b) continue;
+    if (a.y > point.y !== b.y > point.y) {
+      const x = ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
+      if (point.x < x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Shortest distance from the point to any edge of the polygon. */
+export function distanceToPolygon(point: Point, polygon: readonly Point[]): number {
+  let best = Infinity;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (!a || !b) continue;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const squared = dx * dx + dy * dy;
+    const t =
+      squared === 0 ? 0 : Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / squared));
+    best = Math.min(best, Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy)));
+  }
+  return best;
+}
+
+/**
+ * Does the segment `a`-`b` reach more than `depth` inside the polygon, with no
+ * assumption that the polygon is convex?
+ *
+ * For `star`, `cloud` and `heart`, the three geos tldraw draws with notches in
+ * them, where eroding by half-planes would fill the notches in and report an
+ * arrow that passed through empty space. Walks the leg and asks each sample
+ * whether it is inside and far enough from the outline. See
+ * {@link CROSSING_SAMPLE_STEP} for why the sampling error is safe.
+ */
+export function segmentReachesInside(
+  a: Point,
+  b: Point,
+  polygon: readonly Point[],
+  depth: number,
+): boolean {
+  if (polygon.length < 3) return false;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const steps = Math.min(
+    MAX_CROSSING_SAMPLES,
+    Math.max(1, Math.ceil(Math.hypot(dx, dy) / CROSSING_SAMPLE_STEP)),
+  );
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const point = { x: a.x + dx * t, y: a.y + dy * t };
+    if (!pointInPolygon(point, polygon)) continue;
+    if (distanceToPolygon(point, polygon) > depth) return true;
+  }
+  return false;
+}
+
 /** Does any leg of a path run through the rectangle? */
 function pathCrossesRect(
   points: readonly { x: number; y: number }[],
@@ -420,17 +487,27 @@ function pathCrossesRect(
   return false;
 }
 
-/** Does any leg of a path reach more than `inset` inside the convex polygon? */
-function pathCrossesHull(
+/**
+ * Does any leg of a path reach more than `inset` inside the outline?
+ *
+ * Two tests, picked per shape rather than per repo: the exact half-plane
+ * erosion when the outline is convex, which is every geo this tool draws, and
+ * the sampled walk when it is not, which is `star`, `cloud` and `heart`.
+ */
+function pathReachesInside(
   points: readonly Point[],
-  hull: readonly Point[],
+  outline: readonly Point[],
+  convex: boolean,
   inset: number,
 ): boolean {
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1];
     const b = points[i];
     if (!a || !b) continue;
-    if (segmentCrossesHull(a, b, hull, inset)) return true;
+    const hit = convex
+      ? segmentCrossesConvex(a, b, outline, inset)
+      : segmentReachesInside(a, b, outline, inset);
+    if (hit) return true;
   }
   return false;
 }
@@ -453,11 +530,14 @@ function pathCrossesHull(
  * and note shapes count as something to run through, because a text shape has
  * no outline for a line to disappear behind.
  *
- * The test is against the shape's own outline, eroded by the tolerance, and
- * not against its page box: a diamond's box has four empty corners, and an
- * arrow routed through one of them touches nothing. The page box is still the
- * first thing checked, because it rejects almost every pair in one comparison
- * and anything it rejects the eroded outline would reject too.
+ * The test is against the shape's own outline and not against its page box: a
+ * diamond's box has four empty corners, and an arrow routed through one of them
+ * touches nothing. A convex outline, which is every geo this tool draws, is
+ * eroded exactly; a concave one (`star`, `cloud`, `heart`) is walked by
+ * sampling instead, so an arrow threaded through a star's notch stays silent
+ * rather than costing a working diagram an exit code of 3. The page box is
+ * still the first thing checked, because it rejects almost every pair in one
+ * comparison and anything it rejects the outline would reject too.
  *
  * See {@link ARROW_CROSSING_TOLERANCE} for how far in is far enough.
  */
@@ -484,14 +564,14 @@ export function arrowCrossesShape(
       !isLintIgnored(shape, "arrow-crosses-shape"),
   );
 
-  // One hull per candidate, not one per arrow and candidate: a page with
-  // seventy arrows would otherwise rebuild the same thirty polygons seventy
-  // times over.
-  const hulls = new Map<string, Point[]>();
+  // Convexity once per candidate, not once per arrow and candidate: a page with
+  // seventy arrows would otherwise walk the same thirty outlines seventy times
+  // over to ask the same question.
+  const convex = new Map<string, boolean>();
   for (const shape of crossable) {
     const outline = shape.outline;
     if (!outline || outline.length < 3) continue;
-    hulls.set(shape.id, convexHull(outline));
+    convex.set(shape.id, isConvexPolygon(outline));
   }
 
   const lints: Lint[] = [];
@@ -510,8 +590,15 @@ export function arrowCrossesShape(
       const inner = insetRect(bounds, ARROW_CROSSING_TOLERANCE);
       if (!inner) continue;
       if (!pathCrossesRect(points, inner)) continue;
-      const hull = hulls.get(shape.id);
-      if (hull && !pathCrossesHull(points, hull, ARROW_CROSSING_TOLERANCE)) continue;
+      const outline = shape.outline;
+      const isConvex = convex.get(shape.id);
+      if (
+        outline !== undefined &&
+        isConvex !== undefined &&
+        !pathReachesInside(points, outline, isConvex, ARROW_CROSSING_TOLERANCE)
+      ) {
+        continue;
+      }
       lints.push({
         rule: "arrow-crosses-shape",
         shapeIds: [arrow.id, shape.id],

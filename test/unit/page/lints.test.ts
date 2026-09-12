@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   ARROW_CROSSING_TOLERANCE,
   arrowCrossesShape,
-  convexHull,
+  distanceToPolygon,
   emptyLabels,
   friendlessArrows,
   insetRect,
@@ -24,9 +24,12 @@ import {
   offPage,
   overlappingShapes,
   overlappingText,
+  isConvexPolygon,
+  pointInPolygon,
   runLints,
-  segmentCrossesHull,
+  segmentCrossesConvex,
   segmentCrossesRect,
+  segmentReachesInside,
   unreadableLabels,
   type LintBinding,
   type LintShape,
@@ -373,6 +376,38 @@ describe("arrow-crosses-shape", () => {
     expect(arrowCrossesShape(deep, BOUND)).toHaveLength(1);
   });
 
+  it("lets an arrow through the notch of a concave shape", () => {
+    const star: LintShape = {
+      id: "shape:star",
+      type: "geo",
+      geo: "star",
+      bounds: { x: 180, y: 0, w: 100, h: 100 },
+      outline: [
+        { x: 230, y: 0 },
+        { x: 240, y: 40 },
+        { x: 280, y: 50 },
+        { x: 240, y: 60 },
+        { x: 230, y: 100 },
+        { x: 220, y: 60 },
+        { x: 180, y: 50 },
+        { x: 220, y: 40 },
+      ],
+    };
+    const through = [
+      { x: 100, y: 10 },
+      { x: 400, y: 10 },
+    ];
+    expect(arrowCrossesShape([LEFT, RIGHT, star, routed("shape:x", through)], BOUND)).toEqual([]);
+
+    const middle = [
+      { x: 100, y: 50 },
+      { x: 400, y: 50 },
+    ];
+    expect(
+      arrowCrossesShape([LEFT, RIGHT, star, routed("shape:x", middle)], BOUND),
+    ).toHaveLength(1);
+  });
+
   it("flags a note, which is an outline a line can hide behind", () => {
     const note: LintShape = {
       id: "shape:aside",
@@ -410,39 +445,56 @@ describe("segmentCrossesRect", () => {
   });
 });
 
-describe("convexHull", () => {
-  it("keeps the corners and drops a point inside them", () => {
-    const hull = convexHull([
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
-      { x: 10, y: 10 },
-      { x: 0, y: 10 },
-      { x: 5, y: 5 },
-    ]);
-    expect(hull).toHaveLength(4);
-    expect(hull).toEqual(
-      expect.arrayContaining([
+describe("isConvexPolygon", () => {
+  it("says yes to a rectangle, a diamond and an outline with a collinear point", () => {
+    expect(
+      isConvexPolygon([
         { x: 0, y: 0 },
         { x: 10, y: 0 },
         { x: 10, y: 10 },
         { x: 0, y: 10 },
       ]),
-    );
+    ).toBe(true);
+    expect(
+      isConvexPolygon([
+        { x: 5, y: 0 },
+        { x: 10, y: 5 },
+        { x: 5, y: 10 },
+        { x: 0, y: 5 },
+      ]),
+    ).toBe(true);
+    expect(
+      isConvexPolygon([
+        { x: 0, y: 0 },
+        { x: 5, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ]),
+    ).toBe(true);
   });
 
-  it("hands back anything it cannot make a polygon of", () => {
-    expect(convexHull([])).toEqual([]);
-    expect(convexHull([{ x: 1, y: 1 }])).toEqual([{ x: 1, y: 1 }]);
-    const collinear = [
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
-      { x: 2, y: 0 },
-    ];
-    expect(convexHull(collinear)).toHaveLength(3);
+  it("says no to an arrowhead notch and to anything with no area", () => {
+    expect(
+      isConvexPolygon([
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+        { x: 20, y: 0 },
+        { x: 10, y: 30 },
+      ]),
+    ).toBe(false);
+    expect(isConvexPolygon([{ x: 0, y: 0 }, { x: 10, y: 0 }])).toBe(false);
+    expect(
+      isConvexPolygon([
+        { x: 0, y: 0 },
+        { x: 5, y: 0 },
+        { x: 10, y: 0 },
+      ]),
+    ).toBe(false);
   });
 });
 
-describe("segmentCrossesHull", () => {
+describe("segmentCrossesConvex", () => {
   const square = [
     { x: 0, y: 0 },
     { x: 100, y: 0 },
@@ -461,7 +513,7 @@ describe("segmentCrossesHull", () => {
     ];
     for (const [a, b] of cases) {
       expect(
-        segmentCrossesHull(a, b, square, 4),
+        segmentCrossesConvex(a, b, square, 4),
         `${JSON.stringify(a)} to ${JSON.stringify(b)}`,
       ).toBe(segmentCrossesRect(a, b, insetRect(rect, 4) ?? rect));
     }
@@ -469,13 +521,70 @@ describe("segmentCrossesHull", () => {
 
   it("reads the winding order from the shape rather than assuming one", () => {
     const clockwise = [...square].reverse();
-    expect(segmentCrossesHull({ x: -50, y: 50 }, { x: 150, y: 50 }, clockwise, 4)).toBe(true);
-    expect(segmentCrossesHull({ x: -50, y: 150 }, { x: 150, y: 150 }, clockwise, 4)).toBe(false);
+    expect(segmentCrossesConvex({ x: -50, y: 50 }, { x: 150, y: 50 }, clockwise, 4)).toBe(true);
+    expect(segmentCrossesConvex({ x: -50, y: 150 }, { x: 150, y: 150 }, clockwise, 4)).toBe(false);
   });
 
   it("is false for a polygon with no area to speak of", () => {
-    expect(segmentCrossesHull({ x: 0, y: 0 }, { x: 10, y: 0 }, square.slice(0, 2), 4)).toBe(false);
-    expect(segmentCrossesHull({ x: 50, y: 50 }, { x: 60, y: 50 }, square, 60)).toBe(false);
+    expect(segmentCrossesConvex({ x: 0, y: 0 }, { x: 10, y: 0 }, square.slice(0, 2), 4)).toBe(
+      false,
+    );
+    expect(segmentCrossesConvex({ x: 50, y: 50 }, { x: 60, y: 50 }, square, 60)).toBe(false);
+  });
+});
+
+describe("pointInPolygon and distanceToPolygon", () => {
+  // A four-pointed star: the notches between the arms are empty space that a
+  // convex reading would fill in.
+  const star = [
+    { x: 50, y: 0 },
+    { x: 60, y: 40 },
+    { x: 100, y: 50 },
+    { x: 60, y: 60 },
+    { x: 50, y: 100 },
+    { x: 40, y: 60 },
+    { x: 0, y: 50 },
+    { x: 40, y: 40 },
+  ];
+
+  it("puts the centre inside and a notch outside", () => {
+    expect(pointInPolygon({ x: 50, y: 50 }, star)).toBe(true);
+    expect(pointInPolygon({ x: 12, y: 12 }, star)).toBe(false);
+  });
+
+  it("measures the distance to the nearest edge, inside or out", () => {
+    expect(distanceToPolygon({ x: 50, y: 50 }, star)).toBeGreaterThan(4);
+    expect(distanceToPolygon({ x: 50, y: 1 }, star)).toBeLessThan(2);
+  });
+});
+
+describe("segmentReachesInside", () => {
+  const star = [
+    { x: 50, y: 0 },
+    { x: 60, y: 40 },
+    { x: 100, y: 50 },
+    { x: 60, y: 60 },
+    { x: 50, y: 100 },
+    { x: 40, y: 60 },
+    { x: 0, y: 50 },
+    { x: 40, y: 40 },
+  ];
+
+  it("stays quiet for a line through a notch, and for one through a thin arm", () => {
+    // Through the notch between two arms, which a convex reading of the shape
+    // would have filled in.
+    expect(segmentReachesInside({ x: -20, y: 10 }, { x: 40, y: 10 }, star, 4)).toBe(false);
+    // Across the top arm, which is only about five units wide at that height,
+    // so the line clips it without ever being four units inside anything.
+    expect(segmentReachesInside({ x: -20, y: 10 }, { x: 120, y: 10 }, star, 4)).toBe(false);
+  });
+
+  it("fires for a line through the middle of the same star", () => {
+    expect(segmentReachesInside({ x: -20, y: 50 }, { x: 120, y: 50 }, star, 4)).toBe(true);
+  });
+
+  it("is false for a polygon with no area to speak of", () => {
+    expect(segmentReachesInside({ x: 0, y: 0 }, { x: 10, y: 0 }, star.slice(0, 2), 4)).toBe(false);
   });
 });
 
