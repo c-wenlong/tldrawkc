@@ -21,8 +21,10 @@ import {
   type Bounds,
   type BridgeMethod,
   type CanvasHandle,
+  type InspectData,
   type Lint,
   type ShotOptions,
+  type SvgOptions,
 } from "./browser.js";
 
 /** Options every verb shares: how to get a browser and where to resolve paths. */
@@ -123,7 +125,8 @@ export async function run(options: RunOptions): Promise<RunResult> {
       // error with the document untouched rather than an exit 4 after a save.
       if (options.svg !== undefined && !(await canvas.has("svg"))) {
         throw new UsageError(
-          "--svg needs the page's svg() bridge function, which arrives in phase 2.",
+          "--svg needs the page's svg() bridge function, which this page bundle " +
+            "does not implement. Rebuild it with `npm run build`.",
         );
       }
       const needed: BridgeMethod[] = ["load", "exec"];
@@ -237,6 +240,398 @@ export async function shot(options: ShotCommandOptions): Promise<ShotCommandResu
       };
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// inspect
+// ---------------------------------------------------------------------------
+
+export interface InspectOptions extends CommonOptions {
+  file: string;
+  page?: string | undefined;
+  /** Turn a non-empty lint list from exit 3 into exit 0. */
+  allowLints: boolean;
+}
+
+export interface InspectCommandResult {
+  file: string;
+  /**
+   * The bridge's `inspect()` structure, untouched.
+   *
+   * Nested rather than spread across this object on purpose: ARCHITECTURE.md
+   * defines that shape and `inspect --json` prints it unchanged, so there has
+   * to be one field that is exactly it and nothing else.
+   */
+  canvas: InspectData;
+  ms: number;
+  /** 0, or 3 when lints remain and `--allow-lints` was not passed. */
+  exitCode: number;
+}
+
+/**
+ * Read the canvas without touching it.
+ *
+ * Nothing is saved, because nothing changed: the document is loaded, read and
+ * dropped. The lint pass still runs and still decides the exit code, which is
+ * what makes `inspect` usable as a check in its own right.
+ */
+export async function inspect(options: InspectOptions): Promise<InspectCommandResult> {
+  const started = Date.now();
+  const file = resolveTldrPath(options.file, options.cwd);
+  const existing = await readText(file);
+  if (existing === null) throw new UsageError(`${file} does not exist.`);
+
+  return await withCanvas(
+    {
+      pageRoot: options.pageRoot,
+      chromium: options.chromium,
+      headed: options.headed,
+    },
+    async (canvas) => {
+      const needed: BridgeMethod[] = ["load", "inspect"];
+      if (options.page !== undefined) needed.push("setPage");
+      await requireBridge(canvas, needed);
+
+      await canvas.load(existing);
+      if (options.page !== undefined) await setPage(canvas, options.page);
+
+      const read = await canvas.inspect();
+      return {
+        file,
+        canvas: read,
+        ms: Date.now() - started,
+        exitCode: read.lints.length > 0 && !options.allowLints ? 3 : 0,
+      };
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// export
+// ---------------------------------------------------------------------------
+
+export interface ExportOptions extends CommonOptions {
+  file: string;
+  /** Where to write the SVG. At least one of `svg` and `png` is required. */
+  svg?: string | undefined;
+  /** Where to write the PNG. */
+  png?: string | undefined;
+  /** Frame only these shapes. Empty or absent means every shape on the page. */
+  ids?: string[] | undefined;
+  page?: string | undefined;
+  padding: number;
+  pixelRatio: number;
+}
+
+/** One written export. `width` and `height` are that format's own units. */
+export interface ExportedFile {
+  path: string;
+  width: number;
+  height: number;
+}
+
+export interface ExportResult {
+  file: string;
+  svg: ExportedFile | null;
+  png: ExportedFile | null;
+  ms: number;
+  exitCode: number;
+}
+
+/**
+ * Write an SVG, a PNG, or both, from a document that is already finished.
+ *
+ * Nothing is executed and nothing is saved, so the only thing that can fail is
+ * the export itself, which is exit 4 (`ExportError`). The `.tldr` is never at
+ * risk here, and that is why this verb is separate from `run --svg`: an agent
+ * that has drawn the diagram and only wants the file out of it should not have
+ * to hand over a snippet to get one.
+ */
+export async function exportCanvas(options: ExportOptions): Promise<ExportResult> {
+  const started = Date.now();
+  const file = resolveTldrPath(options.file, options.cwd);
+  if (options.svg === undefined && options.png === undefined) {
+    throw new UsageError("export needs --svg <out.svg>, --png <out.png>, or both.");
+  }
+  const existing = await readText(file);
+  if (existing === null) throw new UsageError(`${file} does not exist.`);
+
+  const svgTarget = options.svg === undefined
+    ? null
+    : resolveOutputPath(options.svg, options.cwd);
+  const pngTarget = options.png === undefined
+    ? null
+    : resolveOutputPath(options.png, options.cwd);
+
+  return await withCanvas(
+    {
+      pageRoot: options.pageRoot,
+      chromium: options.chromium,
+      headed: options.headed,
+    },
+    async (canvas) => {
+      const needed: BridgeMethod[] = ["load"];
+      if (svgTarget) needed.push("svg");
+      if (pngTarget) needed.push("shot");
+      if (options.page !== undefined) needed.push("setPage");
+      await requireBridge(canvas, needed);
+
+      await canvas.load(existing);
+      if (options.page !== undefined) await setPage(canvas, options.page);
+
+      const ids = options.ids && options.ids.length > 0 ? options.ids : undefined;
+
+      let svg: ExportedFile | null = null;
+      if (svgTarget) {
+        const svgOptions: SvgOptions = { padding: options.padding };
+        if (ids) svgOptions.ids = ids;
+        try {
+          const exported = await canvas.svg(svgOptions);
+          await writeText(svgTarget, exported.svg);
+          svg = { path: svgTarget, width: exported.width, height: exported.height };
+        } catch (error) {
+          throw new ExportError(`the SVG export failed: ${firstLine(error)}`, { cause: error });
+        }
+      }
+
+      let png: ExportedFile | null = null;
+      if (pngTarget) {
+        const shotOptions: ShotOptions = {
+          padding: options.padding,
+          pixelRatio: options.pixelRatio,
+        };
+        if (ids) shotOptions.ids = ids;
+        try {
+          const taken = await canvas.shot(shotOptions);
+          await writePng(pngTarget, taken.pngBase64);
+          png = { path: pngTarget, width: taken.width, height: taken.height };
+        } catch (error) {
+          throw new ExportError(`the PNG export failed: ${firstLine(error)}`, { cause: error });
+        }
+      }
+
+      return { file, svg, png, ms: Date.now() - started, exitCode: 0 };
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// from-mermaid
+// ---------------------------------------------------------------------------
+
+/** What `helpers.mermaid` takes beyond the source, all optional. */
+export interface MermaidOptions {
+  /** Overrides the direction in the flowchart header. */
+  direction?: string;
+  /** Top-left of the layout in page coordinates. */
+  origin?: { x: number; y: number };
+  /** Rank and node gaps. */
+  spacing?: { rank?: number; node?: number };
+}
+
+export interface FromMermaidOptions extends CommonOptions {
+  file: string;
+  /** The mermaid text itself. The CLI reads `--source <path>` or stdin. */
+  source: string;
+  /** Add to an existing document instead of refusing to overwrite it. */
+  append: boolean;
+  /** Where to write a PNG afterwards, or nothing. */
+  shot?: string | undefined;
+  allowLints: boolean;
+  page?: string | undefined;
+  padding: number;
+  pixelRatio: number;
+  timeoutMs: number;
+  /** Passed through to `helpers.mermaid`. */
+  mermaid?: MermaidOptions | undefined;
+}
+
+export interface FromMermaidResult {
+  file: string;
+  /** Mermaid id to tldraw shape id, for every node that was created. */
+  nodes: Record<string, string>;
+  /** The arrow ids, one per edge. */
+  edges: string[];
+  /** The container ids, one per subgraph. */
+  containers: string[];
+  /**
+   * Every source line the parser could not read.
+   *
+   * Reported rather than dropped, and printed on stderr in human mode: a
+   * diagram that silently lost three statements looks finished and is not.
+   */
+  unsupported: string[];
+  shapeCount: number;
+  lints: Lint[];
+  shot: string | null;
+  ms: number;
+  exitCode: number;
+}
+
+/**
+ * Lift a mermaid flowchart onto the canvas.
+ *
+ * The parse and the layout happen in the page, in `helpers.mermaid`, so this
+ * function is the same load, exec, save, export sequence every other writing
+ * verb uses. What it adds is the file rule: without `--append` the document
+ * must not already exist, because the command's whole job is migration and
+ * overwriting a canvas someone has since fixed by hand is the one unrecoverable
+ * mistake available here.
+ */
+export async function fromMermaid(options: FromMermaidOptions): Promise<FromMermaidResult> {
+  const started = Date.now();
+  const file = resolveTldrPath(options.file, options.cwd);
+  const existing = await readText(file);
+
+  if (!options.append && existing !== null) {
+    throw new UsageError(
+      `${file} already exists. Pass --append to add to it, or pick another name.`,
+    );
+  }
+  if (options.append && existing === null) {
+    throw new UsageError(`--append needs an existing document, and ${file} is not there.`);
+  }
+  if (options.source.trim() === "") {
+    throw new UsageError("the mermaid source is empty.");
+  }
+
+  return await withCanvas(
+    {
+      pageRoot: options.pageRoot,
+      chromium: options.chromium,
+      headed: options.headed,
+    },
+    async (canvas) => {
+      const needed: BridgeMethod[] = ["load", "exec", "save"];
+      if (options.page !== undefined) needed.push("setPage");
+      if (options.shot !== undefined) needed.push("shot");
+      await requireBridge(canvas, needed);
+
+      await canvas.load(existing);
+      if (options.page !== undefined) await setPage(canvas, options.page);
+      await requireMermaidHelper(canvas, options.timeoutMs);
+
+      const exec = await execWithTimeout(
+        canvas,
+        mermaidSnippet(options.source, options.mermaid),
+        options.timeoutMs,
+      );
+      const imported = readMermaidResult(exec.result);
+
+      const json = await saveDocument(canvas);
+      await writeText(file, json);
+
+      let shot: string | null = null;
+      if (options.shot !== undefined) {
+        const target = resolveOutputPath(options.shot, options.cwd);
+        try {
+          const taken = await canvas.shot({
+            padding: options.padding,
+            pixelRatio: options.pixelRatio,
+          });
+          shot = await writePng(target, taken.pngBase64);
+        } catch (error) {
+          throw new ExportError(`the document was saved but the PNG failed: ${firstLine(error)}`, {
+            cause: error,
+          });
+        }
+      }
+
+      return {
+        file,
+        nodes: imported.nodes,
+        edges: imported.edges,
+        containers: imported.containers,
+        unsupported: imported.unsupported,
+        shapeCount: exec.shapeCount,
+        lints: exec.lints,
+        shot,
+        ms: Date.now() - started,
+        exitCode: exec.lints.length > 0 && !options.allowLints ? 3 : 0,
+      };
+    },
+  );
+}
+
+/**
+ * Refuse a page bundle whose helpers bag has no `mermaid`.
+ *
+ * `canvas.has()` only sees the bridge, and `mermaid` lives one level down in
+ * the helpers bag, so the probe is a one-line snippet. Without it the failure
+ * arrives as `helpers.mermaid is not a function` with exit 2, which reads like
+ * the diagram's fault rather than a stale build's.
+ */
+async function requireMermaidHelper(canvas: CanvasHandle, timeoutMs: number): Promise<void> {
+  const probe = await execWithTimeout(
+    canvas,
+    "return typeof helpers.mermaid === 'function'",
+    timeoutMs,
+  );
+  if (probe.result === true) return;
+  throw new EnvironmentError(
+    "the page bundle's helpers bag has no mermaid(). Rebuild it with `npm run build`, " +
+      "or check that src/page/helpers is up to date.",
+  );
+}
+
+/**
+ * The snippet that runs the importer.
+ *
+ * The source is embedded as JSON and parsed at runtime rather than pasted into
+ * the program text. A diagram is arbitrary text: one backtick, quote or
+ * backslash in a node label would otherwise end the literal and the rest of the
+ * file would be read as code.
+ */
+function mermaidSnippet(source: string, mermaid: MermaidOptions | undefined): string {
+  const encodedSource = JSON.stringify(JSON.stringify(source));
+  const encodedOptions = JSON.stringify(JSON.stringify(mermaid ?? {}));
+  return [
+    `const source = JSON.parse(${encodedSource})`,
+    `const opts = JSON.parse(${encodedOptions})`,
+    "return await helpers.mermaid(source, opts)",
+  ].join("\n");
+}
+
+/** What the page is expected to hand back from `helpers.mermaid`. */
+interface MermaidImport {
+  nodes: Record<string, string>;
+  edges: string[];
+  containers: string[];
+  unsupported: string[];
+}
+
+/**
+ * Read the page's answer defensively.
+ *
+ * It arrives as `unknown` from the other side of a `page.evaluate`, and a
+ * missing field should say which one rather than becoming `undefined` in the
+ * printed JSON three steps later.
+ */
+function readMermaidResult(value: unknown): MermaidImport {
+  if (typeof value !== "object" || value === null) {
+    throw new EnvironmentError(
+      `helpers.mermaid returned ${typeof value}, not the expected object.`,
+    );
+  }
+  const record = value as Record<string, unknown>;
+  const nodes: Record<string, string> = {};
+  const rawNodes = record["nodes"];
+  if (typeof rawNodes === "object" && rawNodes !== null) {
+    for (const [key, id] of Object.entries(rawNodes as Record<string, unknown>)) {
+      if (typeof id === "string") nodes[key] = id;
+    }
+  }
+  return {
+    nodes,
+    edges: stringList(record["edges"]),
+    containers: stringList(record["containers"]),
+    unsupported: stringList(record["unsupported"]),
+  };
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string");
 }
 
 // ---------------------------------------------------------------------------
