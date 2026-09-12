@@ -141,9 +141,14 @@ function labelBoundsOf(editor: Editor, shape: TLShape): Rect | undefined {
   const label = geometry.children.find((child) => child.isLabel);
   if (!label) return undefined;
   const transform = editor.getShapePageTransform(shape.id);
+  // All four, not the two on one diagonal: under rotation those two do not
+  // bound the rectangle, and at 45 degrees a square label's pair even shares
+  // an x, which collapses the box to zero width and hides every overlap.
   const corners = [
     transform.applyToPoint({ x: label.bounds.minX, y: label.bounds.minY }),
+    transform.applyToPoint({ x: label.bounds.maxX, y: label.bounds.minY }),
     transform.applyToPoint({ x: label.bounds.maxX, y: label.bounds.maxY }),
+    transform.applyToPoint({ x: label.bounds.minX, y: label.bounds.maxY }),
   ];
   const xs = corners.map((point) => point.x);
   const ys = corners.map((point) => point.y);
@@ -226,9 +231,14 @@ export function collectLintRecords(editor: Editor): {
     if (geo !== undefined) record.geo = geo;
     const fill = propOf<string>(shape, "fill");
     if (fill !== undefined) record.fill = fill;
+    // The shape's own width, unrotated, which is the room its label has.
+    // `bounds` is the axis-aligned page box and says something else as soon as
+    // anything is turned.
+    const own = editor.getShapeGeometry(shape).bounds.width;
+    if (Number.isFinite(own)) record.shapeWidth = own;
     if (growsToFit(shape)) record.growsToFit = true;
-    else if (bounds) {
-      const width = labelWidthOf(editor, shape, bounds.w);
+    else if (Number.isFinite(own)) {
+      const width = labelWidthOf(editor, shape, own);
       if (width !== undefined) record.labelWidth = width;
     }
     return record;

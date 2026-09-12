@@ -55,6 +55,14 @@ export interface LintShape {
    */
   labelWidth?: number;
   /**
+   * The shape's own width, in its own coordinate space, for
+   * `unreadable-label`. Not `bounds.w`, which is the axis-aligned page box: a
+   * wide, short rectangle rotated a quarter turn keeps the label width it
+   * always had and reports a page box only as wide as its height. Absent means
+   * fall back to `bounds.w`, which is right whenever nothing is rotated.
+   */
+  shapeWidth?: number;
+  /**
    * True when the shape resizes itself to whatever its text needs, so a label
    * can never overflow it: an auto-sized `text` shape, or a note, which shrinks
    * its font instead. Those are exempt from `unreadable-label`.
@@ -317,17 +325,19 @@ export function emptyLabels(shapes: readonly LintShape[]): Lint[] {
 export function unreadableLabels(shapes: readonly LintShape[]): Lint[] {
   const lints: Lint[] = [];
   for (const shape of shapes) {
-    const bounds = shape.bounds;
     const labelWidth = shape.labelWidth;
-    if (!bounds || labelWidth === undefined) continue;
+    // The shape's own width, so a rotated shape is judged on the room its
+    // label actually has rather than on the page box a rotation inflates.
+    const width = shape.shapeWidth ?? shape.bounds?.w;
+    if (width === undefined || labelWidth === undefined) continue;
     if (shape.growsToFit === true) continue;
     if (isLintIgnored(shape, "unreadable-label")) continue;
     if ((shape.text ?? "").trim().length === 0) continue;
-    if (labelWidth <= bounds.w + LABEL_WIDTH_TOLERANCE) continue;
+    if (labelWidth <= width + LABEL_WIDTH_TOLERANCE) continue;
     lints.push({
       rule: "unreadable-label",
       shapeIds: [shape.id],
-      message: `${shape.id}'s label needs ${Math.round(labelWidth)} units but the shape is only ${Math.round(bounds.w)} wide, so the text spills out of it`,
+      message: `${shape.id}'s label needs ${Math.round(labelWidth)} units but the shape is only ${Math.round(width)} wide, so the text spills out of it`,
     });
   }
   return lints;

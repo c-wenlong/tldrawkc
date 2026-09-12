@@ -332,6 +332,16 @@ describe("unreadable-label", () => {
     expect(lints[0]?.message).toContain("90");
   });
 
+  it("measures against the shape's own width, not its rotated page box", () => {
+    // A wide, short box turned a quarter turn still has the label room it
+    // always had; its page box is only as wide as its height. Judging by the
+    // page box would flag a label that fits perfectly.
+    const shapes = [
+      geo("shape:a", { x: 0, y: 0, w: 60, h: 200 }, { labelWidth: 180, shapeWidth: 200 }),
+    ];
+    expect(unreadableLabels(shapes)).toEqual([]);
+  });
+
   it("exempts a shape that grows to fit its text", () => {
     const shapes = [
       geo("shape:a", { x: 0, y: 0, w: 90, h: 60 }, { labelWidth: 370, growsToFit: true }),
