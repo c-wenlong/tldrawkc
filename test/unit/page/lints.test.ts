@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   ARROW_CROSSING_TOLERANCE,
   arrowCrossesShape,
+  clipSegmentToRect,
   distanceToPolygon,
   emptyLabels,
   friendlessArrows,
@@ -376,6 +377,48 @@ describe("arrow-crosses-shape", () => {
     expect(arrowCrossesShape(deep, BOUND)).toHaveLength(1);
   });
 
+  it("finds a narrow concave pocket under an arrow thousands of units long", () => {
+    // A plus sign: concave, and its vertical bar is only twenty units wide, so
+    // the part of it more than four units in is a twelve-unit window. Sampling
+    // a leg 7900 units long at a fixed budget puts the samples thirty units
+    // apart and steps straight over that window. The leg is therefore cut down
+    // to the part inside the shape's own box before it is walked, which makes
+    // the spacing independent of how long the arrow is.
+    const plus: LintShape = {
+      id: "shape:plus",
+      type: "geo",
+      bounds: { x: 4000, y: 0, w: 200, h: 200 },
+      outline: [
+        { x: 4090, y: 0 },
+        { x: 4110, y: 0 },
+        { x: 4110, y: 90 },
+        { x: 4200, y: 90 },
+        { x: 4200, y: 110 },
+        { x: 4110, y: 110 },
+        { x: 4110, y: 200 },
+        { x: 4090, y: 200 },
+        { x: 4090, y: 110 },
+        { x: 4000, y: 110 },
+        { x: 4000, y: 90 },
+        { x: 4090, y: 90 },
+      ],
+    };
+    const shapes = [
+      LEFT,
+      obstacle("shape:far", { x: 8000, y: 0, w: 100, h: 60 }),
+      plus,
+      routed("shape:x", [
+        { x: 100, y: 50 },
+        { x: 8000, y: 50 },
+      ]),
+    ];
+    const lints = arrowCrossesShape(shapes, [
+      bind("shape:x", "shape:a", "start"),
+      bind("shape:x", "shape:far", "end"),
+    ]);
+    expect(lints.map((lint) => lint.shapeIds[1])).toEqual(["shape:plus"]);
+  });
+
   it("lets an arrow through the notch of a concave shape", () => {
     const star: LintShape = {
       id: "shape:star",
@@ -585,6 +628,25 @@ describe("segmentReachesInside", () => {
 
   it("is false for a polygon with no area to speak of", () => {
     expect(segmentReachesInside({ x: 0, y: 0 }, { x: 10, y: 0 }, star.slice(0, 2), 4)).toBe(false);
+  });
+});
+
+describe("clipSegmentToRect", () => {
+  const rect = { x: 0, y: 0, w: 100, h: 100 };
+
+  it("returns the part of the segment inside the rectangle", () => {
+    expect(clipSegmentToRect({ x: -100, y: 50 }, { x: 200, y: 50 }, rect)).toEqual({
+      t0: 1 / 3,
+      t1: 2 / 3,
+    });
+  });
+
+  it("keeps the whole of a segment that is already inside", () => {
+    expect(clipSegmentToRect({ x: 20, y: 20 }, { x: 80, y: 80 }, rect)).toEqual({ t0: 0, t1: 1 });
+  });
+
+  it("returns nothing when the segment misses", () => {
+    expect(clipSegmentToRect({ x: -100, y: 150 }, { x: 200, y: 150 }, rect)).toBeNull();
   });
 });
 

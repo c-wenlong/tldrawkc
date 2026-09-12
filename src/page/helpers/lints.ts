@@ -255,11 +255,11 @@ export function insetRect(rect: Rect, inset: number): Rect | null {
  * which is the case that matters for an elbow arrow whose corner lands in a
  * box it never leaves.
  */
-export function segmentCrossesRect(
+export function clipSegmentToRect(
   a: { x: number; y: number },
   b: { x: number; y: number },
   rect: Rect,
-): boolean {
+): { t0: number; t1: number } | null {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   let t0 = 0;
@@ -280,11 +280,20 @@ export function segmentCrossesRect(
     return true;
   };
 
-  if (!clip(-dx, a.x - rect.x)) return false;
-  if (!clip(dx, rect.x + rect.w - a.x)) return false;
-  if (!clip(-dy, a.y - rect.y)) return false;
-  if (!clip(dy, rect.y + rect.h - a.y)) return false;
-  return t1 > t0;
+  if (!clip(-dx, a.x - rect.x)) return null;
+  if (!clip(dx, rect.x + rect.w - a.x)) return null;
+  if (!clip(-dy, a.y - rect.y)) return null;
+  if (!clip(dy, rect.y + rect.h - a.y)) return null;
+  return t1 > t0 ? { t0, t1 } : null;
+}
+
+/** {@link clipSegmentToRect}, when only the yes or no is wanted. */
+export function segmentCrossesRect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  rect: Rect,
+): boolean {
+  return clipSegmentToRect(a, b, rect) !== null;
 }
 
 /** A point, in page coordinates. */
@@ -307,8 +316,18 @@ interface Point {
  */
 const CROSSING_SAMPLE_STEP = ARROW_CROSSING_TOLERANCE / 2;
 
-/** Ceiling on the samples one leg contributes, so a very long arrow stays cheap. */
-const MAX_CROSSING_SAMPLES = 256;
+/**
+ * Last-resort ceiling on the samples one leg contributes.
+ *
+ * Not the thing that keeps the walk cheap: the leg is cut down to the part
+ * inside the shape's own page box before it is ever sampled, and anything
+ * outside that box cannot be inside the shape, so the span walked is at most
+ * the box's diagonal however long the arrow is. At the spacing above that is
+ * a few hundred samples for any shape a person would draw, and the ceiling
+ * only bites on a shape thousands of units across, which `off-page` is already
+ * complaining about.
+ */
+const MAX_CROSSING_SAMPLES = 4096;
 
 /**
  * Is this polygon convex, taking its points in the order they are given?
@@ -447,9 +466,11 @@ export function distanceToPolygon(point: Point, polygon: readonly Point[]): numb
  *
  * For `star`, `cloud` and `heart`, the three geos tldraw draws with notches in
  * them, where eroding by half-planes would fill the notches in and report an
- * arrow that passed through empty space. Walks the leg and asks each sample
+ * arrow that passed through empty space. Walks the segment and asks each sample
  * whether it is inside and far enough from the outline. See
- * {@link CROSSING_SAMPLE_STEP} for why the sampling error is safe.
+ * {@link CROSSING_SAMPLE_STEP} for why the sampling error is safe, and
+ * {@link MAX_CROSSING_SAMPLES} for why callers hand it the part of a leg that
+ * is near the shape rather than the whole thing.
  */
 export function segmentReachesInside(
   a: Point,
@@ -498,16 +519,29 @@ function pathReachesInside(
   points: readonly Point[],
   outline: readonly Point[],
   convex: boolean,
+  box: Rect,
   inset: number,
 ): boolean {
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1];
     const b = points[i];
     if (!a || !b) continue;
-    const hit = convex
-      ? segmentCrossesConvex(a, b, outline, inset)
-      : segmentReachesInside(a, b, outline, inset);
-    if (hit) return true;
+    if (convex) {
+      if (segmentCrossesConvex(a, b, outline, inset)) return true;
+      continue;
+    }
+    // Cut the leg down to the part that is inside the shape's eroded page box
+    // before sampling it. The outline sits inside that box and erosion only
+    // shrinks it further, so nothing more than `inset` inside the shape can lie
+    // outside the clipped span: the walk loses nothing and its spacing stops
+    // depending on how long the arrow is.
+    const span = clipSegmentToRect(a, b, box);
+    if (!span) continue;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const from = { x: a.x + dx * span.t0, y: a.y + dy * span.t0 };
+    const to = { x: a.x + dx * span.t1, y: a.y + dy * span.t1 };
+    if (segmentReachesInside(from, to, outline, inset)) return true;
   }
   return false;
 }
@@ -595,7 +629,7 @@ export function arrowCrossesShape(
       if (
         outline !== undefined &&
         isConvex !== undefined &&
-        !pathReachesInside(points, outline, isConvex, ARROW_CROSSING_TOLERANCE)
+        !pathReachesInside(points, outline, isConvex, inner, ARROW_CROSSING_TOLERANCE)
       ) {
         continue;
       }
