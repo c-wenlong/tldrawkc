@@ -9,9 +9,9 @@ This file is the operating manual. [README.md](README.md) says what the tool
 is for; the design docs it is built from live in the self-learn repo (see
 "Where the design lives" below).
 
-**Status: phase 2.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
-`api` and `doctor` work. `serve` is specified and not written yet;
-`tldrawkc help` lists which phase brings it.
+**Status: phase 3.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
+`list`, `meta set`, `api` and `doctor` work. `serve` is specified and not
+written yet; `tldrawkc help` lists which phase brings it.
 
 ## What lives where
 
@@ -24,7 +24,9 @@ is for; the design docs it is built from live in the self-learn repo (see
 | `src/lib/files.ts` | every file write, all atomic (temp sibling, then rename) |
 | `src/lib/browser.ts` | resolving Chromium, opening the page, the typed wrapper over every bridge call, and `withCanvas` |
 | `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port |
-| `src/lib/canvas.ts` | one function per verb: `run`, `shot`, `newDocument`, `inspect`, `exportCanvas`, `fromMermaid`. Takes data, returns data |
+| `src/lib/canvas.ts` | one function per verb that needs a browser: `run`, `shot`, `newDocument`, `inspect`, `exportCanvas`, `fromMermaid`. Takes data, returns data |
+| `src/lib/meta.ts` | the document metadata: the shape, the `.tldr` JSON surgery, `meta set`, and the SVG stamp. No browser |
+| `src/lib/list.ts` | `list`: a directory of `.tldr` files as data. No browser |
 | `src/lib/api.ts` | the helper reference: a parser over the page's JSDoc, plus the build step that writes `dist/api.json` |
 | `src/lib/errors.ts` | the failures the tool raises on purpose, each carrying its exit code |
 | `src/lib/doctor.ts` | the environment checks, as data |
@@ -99,8 +101,14 @@ Bump the two together or not at all.
 
 ## Verbs
 
-Every verb is one function in `src/lib/canvas.ts` that takes an options object
-and returns a result object. None of them print, none of them exit, and none
+Two of them are not in `canvas.ts` at all. `list` and `meta set` never open a
+browser: one walks a directory and parses JSON, the other rewrites one record
+in a `.tldr`. Putting them through `withCanvas` would buy nothing and cost a
+Chromium launch per call, and a catalog runs `list` on every index. Add a verb
+to `canvas.ts` when it needs a live editor, and beside it when it does not.
+
+Every other verb is one function in `src/lib/canvas.ts` that takes an options
+object and returns a result object. None of them print, none of them exit, and none
 of them open a browser directly. They all have the same shape:
 
 ```ts
@@ -161,6 +169,43 @@ act on.
 Exit 3 is not an error. The command succeeded, so `run` returns normally with
 its `lints` list and an `exitCode` of 3, and `--allow-lints` turns that into 0.
 The file is saved either way, because the work is real.
+
+A lint carries an optional `severity`. Absent means `error`, which is what
+drives exit 3; `warn` is printed and ignored by the exit code. `missing-topic`
+is the only warning, because every diagram drawn before metadata existed has no
+topic and failing them all would be the tool breaking work that is fine.
+`hasBlockingLints` in `src/lib/browser.ts` is the one place that decides, so
+`run`, `inspect` and `from-mermaid` cannot disagree.
+
+## Document metadata
+
+A diagram carries what it is about on the tldraw **document record**
+(`document:document`), under one key in its `meta` bag:
+
+```json
+"meta": { "tldrawkc": { "kc": 1, "title": "", "topic": "", "concepts": [],
+                        "source": "", "created": "" } }
+```
+
+Three things to know before touching it.
+
+- **The document record, not a page record.** A diagram is one document, and
+  pages get added, renamed and reordered. `editor.getDocumentSettings()` and
+  `updateDocumentSettings()` reach it from the page, and it is a plain JSON
+  record in the file, which is what lets `list` and `meta set` work with no
+  browser.
+- **`kc` is the schema version, not a copy of the key.** An indexer reads it
+  first and can refuse a shape it was not written against. Bump it only with a
+  reader that handles both.
+- **The rules exist twice**, in `src/lib/meta.ts` and `src/page/helpers/meta.ts`,
+  because layering rule 1 stops the node side importing the page and the page
+  has to amend the bag while a snippet runs. `test/unit/meta.test.ts` imports
+  both and runs them over one table, so a change to one that the other does not
+  make is a red test. Change both, or delete the test and find a better answer.
+
+`--source` means a path to read from on `from-mermaid` and free text on `new`
+and `meta set`. The allowlist in `args.ts` is per command so nothing collides,
+but do not "unify" them.
 
 ## The helper reference
 

@@ -23,6 +23,7 @@ import {
 
 import type { Lint, LintBinding, LintShape } from "./lints.js";
 import { runLints } from "./lints.js";
+import { readDocumentMeta, type DiagramMeta } from "./meta.js";
 import type { Rect } from "./geometry.js";
 import { toShapeId, type ShapeKey } from "./ids.js";
 
@@ -58,6 +59,14 @@ export interface InspectResult {
   shapes: InspectShape[];
   bindings: InspectBinding[];
   lints: Lint[];
+  /**
+   * The document metadata, or `null` when the file carries none.
+   *
+   * Read from the live store rather than from the file Node already has, so
+   * what `inspect` prints is what tldraw actually loaded. A bag a migration
+   * dropped shows up here as `null`, which is the failure worth seeing.
+   */
+  meta: DiagramMeta | null;
 }
 
 /**
@@ -294,10 +303,20 @@ export function collectLintRecords(editor: Editor): {
   return { shapes, bindings };
 }
 
-/** Run the whole lint pass over the current page. */
+/** The document metadata tldraw currently holds, or `null` when there is none. */
+export function documentMeta(editor: Editor): DiagramMeta | null {
+  return readDocumentMeta(editor.getDocumentSettings().meta);
+}
+
+/**
+ * Run the whole lint pass over the current page and the document.
+ *
+ * The document is passed in every time, which is what lets `missing-topic`
+ * fire. It is a warning, so it never changes an exit code on its own.
+ */
 export function lintPage(editor: Editor): Lint[] {
   const { shapes, bindings } = collectLintRecords(editor);
-  return runLints(shapes, bindings);
+  return runLints(shapes, bindings, { meta: documentMeta(editor) });
 }
 
 /**
@@ -363,5 +382,6 @@ export function describeEditor(editor: Editor): InspectResult {
     shapes: described,
     bindings,
     lints: lintPage(editor),
+    meta: documentMeta(editor),
   };
 }

@@ -94,10 +94,22 @@ interface RunJson {
   file: string;
   result: unknown;
   shapeCount: number;
-  lints: Array<{ rule: string; shapeIds: string[]; message: string }>;
+  lints: Array<{ rule: string; shapeIds: string[]; message: string; severity?: string }>;
   shot: string | null;
   svg: string | null;
   ms: number;
+}
+
+/**
+ * The findings that would cost an exit code 3.
+ *
+ * `missing-topic` is a warning and fires on every document nobody has given a
+ * topic to, which is every fixture in this file: they are about the drawing,
+ * not about the catalog. Filtering it out here keeps each assertion saying
+ * "nothing is wrong with the picture", which is what it always meant.
+ */
+function errorLints(lints: Array<{ rule: string; severity?: string }>) {
+  return lints.filter((lint) => (lint.severity ?? "error") === "error");
 }
 
 describe("run", () => {
@@ -128,7 +140,7 @@ describe("run", () => {
       "ms",
     ]);
     expect(json.shapeCount).toBe(5);
-    expect(json.lints).toEqual([]);
+    expect(errorLints(json.lints)).toEqual([]);
     expect(json.result).toEqual({ boxes: 3, arrows: 2 });
     expect(json.svg).toBeNull();
 

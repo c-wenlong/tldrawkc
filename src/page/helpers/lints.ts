@@ -8,21 +8,45 @@
  * which is where the browser's own text measurement happens, is
  * `collectLintRecords` in `helpers/read.ts`.
  *
- * All seven rules live here: the six from HELPERS.md (`friendless-arrow`,
+ * All eight rules live here: the six from HELPERS.md (`friendless-arrow`,
  * `overlapping-text`, `overlapping-shapes`, `off-page`, `empty-label` and
- * `unreadable-label`) plus `arrow-crosses-shape`, which phase 3 adds.
+ * `unreadable-label`), plus `arrow-crosses-shape` and `missing-topic`, which
+ * phase 3 adds. `missing-topic` is the only one that is a warning rather than
+ * an error, and the only one that reads the document instead of the page.
  */
 
 import type { Rect } from "./geometry.js";
+
+/**
+ * How much a finding costs.
+ *
+ * Absent means `error`, which is every rule about the drawing itself: those
+ * are what exit code 3 is for. `warn` is a finding worth printing that must
+ * not change the exit code, because the document is fine as a drawing and
+ * refusing it would break every file written before the rule existed.
+ */
+export type LintSeverity = "error" | "warn";
 
 /** A single finding. The bridge's `lints()` returns an array of these. */
 export interface Lint {
   /** The rule that fired, e.g. `friendless-arrow`. */
   rule: string;
-  /** Every shape the reader should look at. */
+  /** Every shape the reader should look at. Empty for a document-level rule. */
   shapeIds: string[];
   /** One sentence, addressed to whoever has to fix the diagram. */
   message: string;
+  /** Absent means `error`. See {@link LintSeverity}. */
+  severity?: LintSeverity;
+}
+
+/** A finding's severity, with the default applied. */
+export function severityOf(lint: Lint): LintSeverity {
+  return lint.severity ?? "error";
+}
+
+/** Does this list hold anything that should turn into exit code 3? */
+export function hasBlockingLints(lints: readonly Lint[]): boolean {
+  return lints.some((lint) => severityOf(lint) === "error");
 }
 
 /**
@@ -108,6 +132,7 @@ export const LINT_RULES = [
   "off-page",
   "empty-label",
   "unreadable-label",
+  "missing-topic",
 ] as const;
 
 /**
@@ -799,16 +824,56 @@ export function unreadableLabels(shapes: readonly LintShape[]): Lint[] {
   return lints;
 }
 
+/** What the document-level rules read. Absent means "nobody asked about it". */
+export interface LintDocument {
+  /** The document metadata, or `null` when the file carries none. */
+  meta: { topic: string } | null;
+}
+
+/**
+ * A diagram nobody can find: no topic on the document record.
+ *
+ * A warning and not an error, on purpose. The drawing is fine, and every
+ * `.tldr` written before metadata existed has no topic, so failing here would
+ * turn a whole directory of good diagrams red. What it costs is real though:
+ * the catalog joins assets to courses and concepts through the topic, so an
+ * untagged diagram is in the repo and out of the index.
+ *
+ * It only fires when the caller supplied a document at all. A rule that has
+ * not been told anything about the document should say nothing rather than
+ * assume the worst.
+ */
+export function missingTopic(document: LintDocument | undefined): Lint[] {
+  if (document === undefined) return [];
+  const topic = document.meta?.topic.trim() ?? "";
+  if (topic !== "") return [];
+  return [
+    {
+      rule: "missing-topic",
+      shapeIds: [],
+      message:
+        "this document names no topic, so a catalog cannot file it. " +
+        "Set one with `tldrawkc meta set <file> --topic <slug>`, or pass --topic to `new`",
+      severity: "warn",
+    },
+  ];
+}
+
 /**
  * Run every rule and concatenate the findings.
  *
  * Order is rule by rule, in {@link LINT_RULES} order, and within a rule it
  * follows the order the shapes were given, so a caller that iterates the
  * current page gets findings in drawing order rather than a random one.
+ *
+ * `document` is optional because the rules that need it are about the file and
+ * not the page: a caller checking a hand-built shape list has nothing to say
+ * about a document, and should not be told its metadata is missing.
  */
 export function runLints(
   shapes: readonly LintShape[],
   bindings: readonly LintBinding[],
+  document?: LintDocument,
 ): Lint[] {
   return [
     ...friendlessArrows(shapes, bindings),
@@ -818,5 +883,6 @@ export function runLints(
     ...offPage(shapes),
     ...emptyLabels(shapes),
     ...unreadableLabels(shapes),
+    ...missingTopic(document),
   ];
 }

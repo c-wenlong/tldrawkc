@@ -45,7 +45,8 @@ import {
   type GridOptions,
   type LineOptions,
 } from "./layout.js";
-import { describeEditor, lintPage, plainTextOf, type InspectResult } from "./read.js";
+import { describeEditor, documentMeta, lintPage, plainTextOf, type InspectResult } from "./read.js";
+import { patchedBag, type DiagramMeta, type MetaPatch } from "./meta.js";
 import { parseMermaid, type ParseMermaidOptions } from "./mermaid.js";
 import { applyPlan, type ApplyPlanOptions, type ApplyPlanResult } from "./mermaid-apply.js";
 import type { Lint } from "./lints.js";
@@ -65,6 +66,8 @@ export type { ApplyPlanOptions, ApplyPlanResult } from "./mermaid-apply.js";
 export { connectionKey } from "./keys.js";
 export type { Lint, LintShape, LintBinding } from "./lints.js";
 export type { ShapeKey, ShapeMeta, MetaValue } from "./ids.js";
+export type { DiagramMeta, MetaPatch } from "./meta.js";
+export { META_KEY, META_VERSION } from "./meta.js";
 
 /** Options for `helpers.mermaid`: the parser's, plus the layout pass's. */
 export interface MermaidOptions extends ParseMermaidOptions, ApplyPlanOptions {}
@@ -93,6 +96,7 @@ export interface Helpers {
   plainText(shape: ShapeKey | TLShape): string;
   describe(): InspectResult;
   getLints(): Lint[];
+  meta(patch?: MetaPatch): DiagramMeta | null;
   mermaid(source: string, opts?: MermaidOptions): ApplyPlanResult;
 }
 
@@ -355,6 +359,31 @@ export function createHelpers(editor: Editor): HelpersHandle {
   }
 
   /**
+   * Read or amend the document metadata: what this diagram is about.
+   *
+   * With no argument it reads. With a patch it merges, so a snippet can add a
+   * concept without restating the title. `topic` and each `concept` must be a
+   * slug from the shared vocabulary; `created` is written once and then left
+   * alone. It lands on the document record, so `save` carries it into the
+   * `.tldr` and `inspect --json` reads it back out.
+   *
+   * @example
+   * helpers.meta({ topic: 'dot-product', concepts: ['vector-as-a-list-of-numbers'] })
+   * @example
+   * const topic = helpers.meta()?.topic ?? '(none)'
+   */
+  function meta(patch?: MetaPatch): DiagramMeta | null {
+    if (patch === undefined) return documentMeta(editor);
+    const next = patchedBag(
+      editor.getDocumentSettings().meta,
+      patch,
+      new Date().toISOString(),
+    );
+    editor.updateDocumentSettings({ meta: next.bag });
+    return next.meta;
+  }
+
+  /**
    * Parse a mermaid flowchart and draw it: boxes, bound arrows, and a
    * container behind each subgraph.
    *
@@ -401,6 +430,7 @@ export function createHelpers(editor: Editor): HelpersHandle {
     plainText,
     describe,
     getLints,
+    meta,
     mermaid,
   };
 

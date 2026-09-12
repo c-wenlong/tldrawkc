@@ -72,6 +72,24 @@ function options(overrides: Partial<Parameters<typeof run>[0]> = {}) {
   };
 }
 
+/**
+ * The saved document's records.
+ *
+ * A `.tldr` holds more than shapes: the document record (which is where the
+ * metadata lives), pages, bindings. The stand-in writes one too, so a test
+ * that means "how many shapes" has to say so rather than counting the array.
+ */
+async function records(target: string): Promise<Record<string, unknown>[]> {
+  const parsed = JSON.parse(await fs.readFile(target, "utf8")) as {
+    records: Record<string, unknown>[];
+  };
+  return parsed.records;
+}
+
+async function shapeRecords(target: string): Promise<Record<string, unknown>[]> {
+  return (await records(target)).filter((record) => record["typeName"] === "shape");
+}
+
 describe("run", () => {
   it("draws, saves and reports what it drew", async () => {
     const result = await run(options({ evalSource: THREE_BOXES }));
@@ -83,9 +101,8 @@ describe("run", () => {
     expect(result.saved).toBe(true);
     expect(result.ms).toBeGreaterThan(0);
 
-    const document = JSON.parse(await fs.readFile(file, "utf8")) as { records: unknown[] };
-    expect(Array.isArray(document.records)).toBe(true);
-    expect(document.records).toHaveLength(5);
+    expect(Array.isArray(await records(file))).toBe(true);
+    expect(await shapeRecords(file)).toHaveLength(5);
   });
 
   it("loads what a previous run saved, so two snippets compose", async () => {
@@ -242,8 +259,7 @@ describe("new", () => {
     const created = await newDocument({ file, cwd: dir, pageRoot: STAND_IN_PAGE });
     expect(created.file).toBe(file);
 
-    const document = JSON.parse(await fs.readFile(file, "utf8")) as { records: unknown[] };
-    expect(document.records).toEqual([]);
+    expect(await shapeRecords(file)).toEqual([]);
 
     const after = await run(options({ create: false, evalSource: THREE_BOXES }));
     expect(after.shapeCount).toBe(5);
@@ -254,8 +270,7 @@ describe("new", () => {
     const copy = path.join(dir, "copy.tldr");
     await newDocument({ file: copy, from: file, cwd: dir, pageRoot: STAND_IN_PAGE });
 
-    const document = JSON.parse(await fs.readFile(copy, "utf8")) as { records: unknown[] };
-    expect(document.records).toHaveLength(5);
+    expect(await shapeRecords(copy)).toHaveLength(5);
   });
 });
 
@@ -370,13 +385,12 @@ describe("from-mermaid", () => {
     expect(result.unsupported).toEqual(["this line is not mermaid at all"]);
     expect(result.lints).toEqual([]);
 
-    const document = JSON.parse(await fs.readFile(file, "utf8")) as { records: unknown[] };
-    expect(document.records).toHaveLength(result.shapeCount);
+    expect(await shapeRecords(file)).toHaveLength(result.shapeCount);
   });
 
   it("refuses an existing document without --append and adds to it with one", async () => {
     await fromMermaid(mermaidOptions());
-    const first = JSON.parse(await fs.readFile(file, "utf8")) as { records: unknown[] };
+    const first = await shapeRecords(file);
 
     const error = await fromMermaid(mermaidOptions()).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(UsageError);
@@ -385,7 +399,7 @@ describe("from-mermaid", () => {
     const appended = await fromMermaid(
       mermaidOptions({ append: true, source: "flowchart TD\n  x[Extra] --> y[More]" }),
     );
-    expect(appended.shapeCount).toBeGreaterThan(first.records.length);
+    expect(appended.shapeCount).toBeGreaterThan(first.length);
   });
 
   it("writes a PNG with --shot", async () => {

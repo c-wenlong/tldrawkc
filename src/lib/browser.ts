@@ -25,6 +25,7 @@ import { promisify } from "node:util";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 
 import { EXIT_CODES, EnvironmentError, TldrawkcError } from "./errors.js";
+import type { DiagramMeta } from "./meta.js";
 import { PAGE_DIST_DIR } from "./paths.js";
 import { startPageServer, type PageServer } from "./server.js";
 
@@ -233,11 +234,36 @@ export interface Bounds {
   h: number;
 }
 
+/**
+ * How much a finding costs. Absent means `error`, which is exit code 3.
+ * `warn` is printed and ignored by the exit code: `missing-topic` is the one
+ * rule that uses it, because a diagram written before metadata existed is
+ * still a good diagram.
+ */
+export type LintSeverity = "error" | "warn";
+
 /** One complaint from the lint pass. See the rule table in HELPERS.md. */
 export interface Lint {
   rule: string;
+  /** Empty for a document-level rule, which has no shape to point at. */
   shapeIds: string[];
   message: string;
+  severity?: LintSeverity;
+}
+
+/** A finding's severity, with the default applied. */
+export function severityOf(lint: Lint): LintSeverity {
+  return lint.severity ?? "error";
+}
+
+/**
+ * Does this list hold anything worth exit code 3?
+ *
+ * The one place that decides, so `run`, `inspect` and `from-mermaid` cannot
+ * disagree about whether a warning counts.
+ */
+export function hasBlockingLints(lints: readonly Lint[]): boolean {
+  return lints.some((lint) => severityOf(lint) === "error");
 }
 
 export interface PingResult {
@@ -324,6 +350,14 @@ export interface InspectData {
   shapes: InspectShape[];
   bindings: InspectBinding[];
   lints: Lint[];
+  /**
+   * The document metadata, or `null` when the file carries none.
+   *
+   * From the live store, not from the file text Node already holds, so it is
+   * what tldraw actually loaded. A page bundle older than this field answers
+   * `undefined`, which reads as `null` here.
+   */
+  meta?: DiagramMeta | null;
 }
 
 /**

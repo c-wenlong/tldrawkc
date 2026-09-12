@@ -54,7 +54,7 @@ interface InspectJson {
   bounds: { x: number; y: number; w: number; h: number } | null;
   shapes: Array<{ id: string; type: string; geo?: string; text: string | null }>;
   bindings: Array<{ arrow: string; from: string | null; to: string | null }>;
-  lints: Array<{ rule: string; shapeIds: string[]; message: string }>;
+  lints: Array<{ rule: string; shapeIds: string[]; message: string; severity?: string }>;
 }
 
 interface MermaidJson {
@@ -64,7 +64,7 @@ interface MermaidJson {
   containers: string[];
   unsupported: string[];
   shapeCount: number;
-  lints: Array<{ rule: string; shapeIds: string[]; message: string }>;
+  lints: Array<{ rule: string; shapeIds: string[]; message: string; severity?: string }>;
   shot: string | null;
   ms: number;
 }
@@ -223,6 +223,18 @@ async function pngSize(file: string): Promise<{ width: number; height: number }>
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
+/**
+ * The findings that would cost an exit code 3.
+ *
+ * `missing-topic` is a warning and fires on every document nobody has given a
+ * topic to, which is every fixture in this file: they are about the drawing,
+ * not about the catalog. Filtering it out here keeps each assertion saying
+ * "nothing is wrong with the picture", which is what it always meant.
+ */
+function errorLints(lints: Array<{ rule: string; severity?: string }>) {
+  return lints.filter((lint) => (lint.severity ?? "error") === "error");
+}
+
 describe("inspect", () => {
   it("reports every shape and binding from a document a snippet drew", async () => {
     await drawFourBoxes();
@@ -239,10 +251,11 @@ describe("inspect", () => {
       "shapes",
       "bindings",
       "lints",
+      "meta",
     ]);
     expect(json.shapes).toHaveLength(8);
     expect(json.bindings).toHaveLength(4);
-    expect(json.lints).toEqual([]);
+    expect(errorLints(json.lints)).toEqual([]);
     expect(json.shapes.map((shape) => shape.text)).toContain("agent cli");
     // Every arrow is bound at both ends, which is the whole point of `connect`.
     expect(json.bindings.every((binding) => binding.from && binding.to)).toBe(true);
@@ -386,7 +399,7 @@ describe("from-mermaid", () => {
     const canvas = JSON.parse(read.stdout) as InspectJson;
     expect(canvas.bindings).toHaveLength(9);
     expect(canvas.bindings.every((binding) => binding.from && binding.to)).toBe(true);
-    expect(canvas.lints).toEqual([]);
+    expect(errorLints(canvas.lints)).toEqual([]);
 
     const exported = await cli(["export", "diagram.tldr", "--svg", "out.svg"]);
     expect(exported.code).toBe(0);

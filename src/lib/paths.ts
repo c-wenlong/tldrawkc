@@ -126,6 +126,41 @@ export function resolveOutputPath(input: string, cwd: string = process.cwd()): s
 }
 
 /**
+ * Where `list` looks when the caller names no directory.
+ *
+ * The self-learn convention, and the only one this tool has: `tldrawkc` writes
+ * `learn/assets/<name>.{tldr,svg}` flat in the repo that consumes it. Relative,
+ * because it is resolved against the caller's cwd and never against the
+ * package.
+ */
+export const DEFAULT_LIST_DIR = "learn/assets";
+
+/**
+ * Resolve the directory `list` should walk: the argument, or
+ * {@link DEFAULT_LIST_DIR} under the working directory.
+ */
+export function resolveListDir(input: string | undefined, cwd: string = process.cwd()): string {
+  return path.resolve(cwd, input ?? DEFAULT_LIST_DIR);
+}
+
+/**
+ * The file beside `file` with the same stem and a different extension.
+ *
+ * `siblingPath('/a/x.tldr', '.svg')` is `/a/x.svg`. That pairing is the whole
+ * convention `list` reports on, and today's catalog indexer relies on it, so
+ * it is a function here rather than a `replace` at three call sites.
+ */
+export function siblingPath(file: string, extension: string): string {
+  const dir = path.dirname(file);
+  return path.join(dir, `${path.basename(file, path.extname(file))}${extension}`);
+}
+
+/** A path relative to a directory, with forward slashes, for display. */
+export function relativeToDir(dir: string, file: string): string {
+  return path.relative(dir, file).split(path.sep).join("/");
+}
+
+/**
  * Do two already-resolved paths name the same file?
  *
  * Used to refuse an export that would land on the document it came from:

@@ -5,9 +5,9 @@ line, take a picture of it, look, and fix it. Built for coding agents, which
 write code well and read images well but cannot see what they just drew unless
 something renders it.
 
-**Status: phase 2.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
-`api` and `doctor` work. The human view (`serve`) is specified and not written
-yet; `tldrawkc help` lists which phase brings it.
+**Status: phase 3.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
+`list`, `meta set`, `api` and `doctor` work. The human view (`serve`) is
+specified and not written yet; `tldrawkc help` lists which phase brings it.
 
 ## What it draws
 
@@ -119,6 +119,8 @@ tldrawkc shot diagram.tldr                # a PNG in the temp directory, path pr
 tldrawkc inspect diagram.tldr             # every shape, binding and lint. Exits 3 on lints
 tldrawkc export diagram.tldr --svg out.svg --png out.png
 tldrawkc from-mermaid map.tldr --source map.mmd
+tldrawkc list                             # every .tldr in learn/assets, with its topic
+tldrawkc meta set diagram.tldr --topic dot-product
 tldrawkc api                              # what a snippet can call
 tldrawkc doctor                           # node, the bundle, Chromium, the page, fonts, write access
 ```
@@ -148,7 +150,8 @@ and any other consumer.
 
 `export` writes the files that get committed: a self-contained SVG with the
 fonts inlined, a PNG, or both. Nothing is executed and nothing is saved, so the
-`.tldr` cannot be damaged by an export.
+`.tldr` cannot be damaged by an export. The SVG carries the document's title and
+topic, if it has any; see below.
 
 `from-mermaid` lifts an existing flowchart onto the canvas, which is the point
 of the whole tool for a repo whose diagrams are all mermaid today:
@@ -161,10 +164,74 @@ Without `--append` the document must not already exist, so a canvas someone has
 since fixed by hand is never overwritten. Any line the parser cannot read is
 reported, in the result and on stderr, and never silently dropped.
 
+### What a diagram is about
+
+A drawing that nothing can file is a drawing nobody finds again. Every document
+can carry a small versioned object on its tldraw document record, which travels
+inside the `.tldr` and needs no sidecar:
+
+```json
+{ "kc": 1,
+  "title": "A vector as a list of numbers",
+  "topic": "vector-and-linear-algebra-basics",
+  "concepts": ["vector-as-a-list-of-numbers"],
+  "source": "learn/concepts/linear-algebra/vector-as-a-list-of-numbers.md",
+  "created": "2026-09-13T10:00:00.000Z" }
+```
+
+`topic` is one slug from whatever vocabulary the consuming repo keeps; in
+self-learn that is `content/topics.yaml`, and `concepts` are concept ids under
+it. `source` is free text: a session id, a note path, whatever prompted the
+diagram. `kc` is the schema version, so a reader can refuse a shape it was not
+written against. Nothing here is required, and a document with none of it still
+draws, exports and loads.
+
+Four ways in and one way out:
+
+```bash
+tldrawkc new v.tldr --topic vector-and-linear-algebra-basics --title "Vectors" \
+  --concept vector-as-a-list-of-numbers --source session-42
+tldrawkc meta set v.tldr --topic vector-and-linear-algebra-basics   # backfill, no browser
+tldrawkc run v.tldr --eval "helpers.meta({ concepts: ['dot-product'] })"
+tldrawkc inspect v.tldr --json                                      # reads it back under "meta"
+```
+
+`meta set` is idempotent: `created` is written once and preserved, so a second
+identical call leaves the file alone and says `unchanged`. `helpers.meta(patch)`
+merges rather than replaces, so a snippet can add a concept without restating
+the title, and `helpers.meta()` with no argument reads.
+
+`export --svg` copies the title and topic onto the exported file, as a `<title>`
+element and a `data-kc-topic` attribute on the root. The `.tldr` stays the source
+of truth; the SVG is derived, and it should still be able to say what it is
+about when it turns up on its own.
+
+### Listing a directory of diagrams
+
+```bash
+tldrawkc list                     # learn/assets under the working directory
+tldrawkc list docs/diagrams --json
+```
+
+No browser, so it is cheap enough to run on every index. Per `.tldr`: the path,
+the `.svg` and `.png` beside it and whether they exist, the metadata or `null`,
+the shape count, and the mtime, sorted by path. A file that will not parse goes
+in `errors` and never throws past, because one corrupt document in a directory
+of thirty should not cost the answer for the other twenty-nine.
+
+The human view is a table with the topic first:
+
+```
+topic                            shapes  svg  path
+vector-and-linear-algebra-basics     43  yes  vector-as-a-list-of-numbers.tldr
+(none)                               12  no   scratch.tldr
+2 diagrams, 1 with a topic, 0 unreadable
+```
+
 ### The lint pass
 
-`run`, `inspect` and `from-mermaid` all report it, and a non-empty list is exit
-code 3. Seven rules:
+`run`, `inspect` and `from-mermaid` all report it, and a finding at error level
+is exit code 3. Eight rules:
 
 | Rule | Fires when |
 | --- | --- |
@@ -175,6 +242,12 @@ code 3. Seven rules:
 | `off-page` | A shape sits further than 10000 page units from the origin |
 | `empty-label` | A geo shape has no text and no fill, so it renders as an unexplained outline |
 | `unreadable-label` | The widest unbreakable run of a label is wider than the room the shape gives it |
+| `missing-topic` | The document names no topic, so a catalog cannot file it. A **warning**: printed, and never an exit code |
+
+`missing-topic` is the only warning. Every `.tldr` drawn before metadata existed
+has no topic, and failing them all would be this tool breaking work that is
+fine. It prints as `warn` rather than `lint` and `hasBlockingLints` ignores it,
+so exit code 3 still means the picture is wrong.
 
 `meta.lintIgnore` on a shape mutes a rule for it: an array of rule names, or
 `true` for all of them. `helpers.stub` sets it, which is the only reason a

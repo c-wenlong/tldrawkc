@@ -33,12 +33,15 @@ that instead of guessing at helper names.
    line per shape with its position, size and label, then the bindings, then
    the lints. `--json` gives the same thing as data. Never clear a canvas you
    did not create.
-2. **Draw.** Write a snippet and run
-   `tldrawkc run <file> --code <snippet.js> --shot <out.png> --create`.
+2. **Name the subject, then draw.** Create the document with its topic on it:
+   `tldrawkc new <file> --topic <slug> --title "<a human title>" --concept <slug>`.
+   Then run the snippet:
+   `tldrawkc run <file> --code <snippet.js> --shot <out.png>`.
    `--code -` reads the snippet from stdin, so a heredoc leaves no file
-   behind. `--create` starts from an empty document when the file is missing.
-   Use `helpers.box` and `helpers.connect`; never build a raw arrow shape for
-   a real connection.
+   behind. `--create` starts from an empty document when the file is missing,
+   which is the shortcut worth avoiding here: it writes no topic, and the run
+   will warn `missing-topic`. Use `helpers.box` and `helpers.connect`; never
+   build a raw arrow shape for a real connection.
 3. **Look.** Open the PNG with the Read tool. Judge it as a stranger would:
    clipped or overlapping text, arrows crossing boxes, a label sitting on a
    line, a reading order that is not obvious.
@@ -60,8 +63,9 @@ Never report a diagram finished without having looked at the last screenshot.
 | 2 | The snippet threw. The page rolled back, the document is untouched. | Fix the snippet and run again. Subtract 2 from the reported line number: the wrapper adds a header. |
 | 3 | Saved, and lints remain. The work is real, so the file is written. | Read every lint and fix it. `--allow-lints` turns it into 0, for a stub or legend you meant to leave and never as a shortcut. |
 
-Each lint names its rule, the shape ids and what is wrong. The rule set grows,
-so read what it printed rather than a list you remember.
+Each lint names its rule, the shape ids and what is wrong. A line beginning
+`warn` is a warning: printed, and never the reason for a non-zero exit. The
+rule set grows, so read what it printed rather than a list you remember.
 
 ## A worked example
 
@@ -86,6 +90,50 @@ Read `/tmp/loop.png`: four boxes in an L, every arrow touching a box edge,
 every label clear of every outline. The gaps are 120 and 140 because a
 labelled arrow needs room; below about 60 units the label covers the line and
 lands on both boxes.
+
+## Say what the diagram is about
+
+Every diagram names one topic from the shared vocabulary. Without it the
+catalog cannot file the diagram, and it is in the repo and out of the index.
+
+**The vocabulary lives in self-learn at `content/topics.yaml`**, one entry per
+topic with a permanent `slug`. Read it and pick an existing slug; do not invent
+one. Concepts are the ids of `learn/concepts/<domain>/<file>.md`, listed under
+that topic's `maps.concepts`. Outside self-learn there may be no vocabulary, in
+which case skip the flags and accept the warning.
+
+| Field | What it is |
+| --- | --- |
+| `--topic <slug>` | one vocabulary slug. The required join for every asset |
+| `--title "<text>"` | a human title for the diagram |
+| `--concept <slug>` | a concept id under that topic. Repeat the flag for several |
+| `--source "<text>"` | what prompted this: a session id, the note's path |
+
+Three ways to set it, all landing in the same place inside the `.tldr`:
+
+```bash
+tldrawkc new x.tldr --topic vector-and-linear-algebra-basics \
+  --title "A vector as a list of numbers" --concept vector-as-a-list-of-numbers
+tldrawkc meta set x.tldr --topic vector-and-linear-algebra-basics   # an existing file
+```
+
+```js
+helpers.meta({ concepts: ['dot-product'] })   // inside a snippet, merges
+```
+
+`meta set` opens no browser and is idempotent, so it is the one to reach for
+when backfilling a diagram someone drew earlier. `inspect --json` reads it back
+under `meta`, and `export --svg` copies the title and topic into the SVG.
+
+## Finding the diagrams that already exist
+
+```bash
+tldrawkc list --json          # learn/assets under the working directory
+```
+
+One row per `.tldr`: the path, the metadata, the shape count, whether the
+`.svg` beside it exists, and the mtime. Read this instead of globbing the
+directory, and before drawing something that may already be there.
 
 ## Where files go in self-learn
 
@@ -141,4 +189,4 @@ rebuilds, not a teaching diagram.
 writes it, is phase 4 and not built yet. Until it lands a human looks at the
 exported SVG, or opens the `.tldr` in a tldraw app of their own.
 
-Verified against tldrawkc 0.1.0.
+Verified against tldrawkc 0.1.0, phase 3.

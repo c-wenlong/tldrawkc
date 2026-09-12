@@ -17,6 +17,7 @@ import { isAlreadyExists, readText, writePng, writeText } from "./files.js";
 import { isSamePath, resolveOutputPath, resolveTldrPath, tempShotPath } from "./paths.js";
 import { EnvironmentError, ExportError, SnippetError, UsageError } from "./errors.js";
 import {
+  hasBlockingLints,
   withCanvas,
   type Bounds,
   type BridgeMethod,
@@ -26,6 +27,15 @@ import {
   type ShotOptions,
   type SvgOptions,
 } from "./browser.js";
+import {
+  applyMeta,
+  isEmptyPatch,
+  readMeta,
+  stampSvg,
+  validatePatch,
+  type DiagramMeta,
+  type MetaPatch,
+} from "./meta.js";
 
 /** Options every verb shares: how to get a browser and where to resolve paths. */
 interface CommonOptions {
@@ -147,14 +157,21 @@ export async function run(options: RunOptions): Promise<RunResult> {
       const exec = await execWithTimeout(canvas, source, options.timeoutMs);
 
       let saved = false;
+      // The document as it now stands, which is what the SVG's title and
+      // topic come from. A snippet may have called `helpers.meta`, so the
+      // text Node loaded is already out of date; the freshly serialised
+      // document is not. With `--no-save` there is nothing fresher than the
+      // file, so that is what gets used.
+      let current = existing;
       if (options.save) {
         const json = await saveDocument(canvas);
         await writeText(file, json);
         saved = true;
+        current = json;
       }
 
       const shot = await exportPng(canvas, options, file);
-      const svg = await exportSvg(canvas, options);
+      const svg = await exportSvg(canvas, options, metaOf(current));
 
       const lints = exec.lints;
       return {
@@ -166,7 +183,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
         svg,
         ms: Date.now() - started,
         saved,
-        exitCode: lints.length > 0 && !options.allowLints ? 3 : 0,
+        exitCode: hasBlockingLints(lints) && !options.allowLints ? 3 : 0,
       };
     },
   );
@@ -303,11 +320,15 @@ export async function inspect(options: InspectOptions): Promise<InspectCommandRe
       if (options.page !== undefined) await setPage(canvas, options.page);
 
       const read = await canvas.inspect();
+      // `meta` is normalised to `null` rather than left absent, so a consumer
+      // of `inspect --json` can read the field unconditionally even against a
+      // page bundle built before the field existed.
+      const withMeta: InspectData = { ...read, meta: read.meta ?? null };
       return {
         file,
-        canvas: read,
+        canvas: withMeta,
         ms: Date.now() - started,
-        exitCode: read.lints.length > 0 && !options.allowLints ? 3 : 0,
+        exitCode: hasBlockingLints(read.lints) && !options.allowLints ? 3 : 0,
       };
     },
   );
@@ -414,7 +435,7 @@ export async function exportCanvas(options: ExportOptions): Promise<ExportResult
         if (ids) svgOptions.ids = ids;
         try {
           const exported = await canvas.svg(svgOptions);
-          await writeText(svgTarget, exported.svg);
+          await writeText(svgTarget, stampSvg(exported.svg, metaOf(existing)));
           svg = { path: svgTarget, width: exported.width, height: exported.height };
         } catch (error) {
           throw new ExportError(`the SVG export failed: ${firstLine(error)}`, { cause: error });
@@ -590,7 +611,7 @@ export async function fromMermaid(options: FromMermaidOptions): Promise<FromMerm
         lints: exec.lints,
         shot,
         ms: Date.now() - started,
-        exitCode: exec.lints.length > 0 && !options.allowLints ? 3 : 0,
+        exitCode: hasBlockingLints(exec.lints) && !options.allowLints ? 3 : 0,
       };
     },
   );
@@ -688,10 +709,16 @@ export interface NewDocumentOptions extends CommonOptions {
   file: string;
   /** `--from`: an existing `.tldr` to start from. */
   from?: string | undefined;
+  /** `--title`, `--topic`, `--concept`, `--source`. Empty means write no metadata. */
+  meta?: MetaPatch | undefined;
+  /** Injected by the tests so a written `created` is predictable. */
+  now?: Date | undefined;
 }
 
 export interface NewDocumentResult {
   file: string;
+  /** What was written to the document record, or `null` when no flags were given. */
+  meta: DiagramMeta | null;
   ms: number;
 }
 
@@ -716,6 +743,11 @@ export async function newDocument(options: NewDocumentOptions): Promise<NewDocum
     throw new UsageError(`${file} already exists. Delete it or pick another name.`);
   }
 
+  // Before the browser starts: a bad slug should cost a millisecond, not a
+  // Chromium launch and a file the caller then has to delete.
+  const patch = options.meta ?? {};
+  if (!isEmptyPatch(patch)) validatePatch(patch);
+
   let from: string | null = null;
   if (options.from !== undefined) {
     const source = resolveTldrPath(options.from, options.cwd);
@@ -732,9 +764,16 @@ export async function newDocument(options: NewDocumentOptions): Promise<NewDocum
     async (canvas) => {
       await requireBridge(canvas, ["load", "save"]);
       await canvas.load(from);
-      const json = await saveDocument(canvas);
+      const saved = await saveDocument(canvas);
+      // Stamped here rather than through a snippet, because `new` does not run
+      // one and adding an `exec` step for six strings would give a snippet-shaped
+      // failure (exit 2) to something that is not a snippet. The document
+      // record is plain JSON, and this is the same code `meta set` runs.
+      const stamped = isEmptyPatch(patch)
+        ? { json: saved, meta: null }
+        : applyMeta(saved, patch, (options.now ?? new Date()).toISOString(), file);
       try {
-        await writeText(file, json, { exclusive: true });
+        await writeText(file, stamped.json, { exclusive: true });
       } catch (error) {
         if (isAlreadyExists(error)) {
           throw new UsageError(
@@ -743,7 +782,7 @@ export async function newDocument(options: NewDocumentOptions): Promise<NewDocum
         }
         throw error;
       }
-      return { file, ms: Date.now() - started };
+      return { file, meta: stamped.meta, ms: Date.now() - started };
     },
   );
 }
@@ -861,13 +900,33 @@ async function exportPng(
   }
 }
 
+/**
+ * The metadata a document carries, or `null`, never a throw.
+ *
+ * Reading metadata is a side errand of an export, so a file this tool cannot
+ * parse for metadata should still export: the picture is what was asked for.
+ * `list`, whose whole job is the metadata, reports the parse failure instead.
+ */
+function metaOf(json: string | null): DiagramMeta | null {
+  if (json === null) return null;
+  try {
+    return readMeta(json);
+  } catch {
+    return null;
+  }
+}
+
 /** The SVG half. Capability was checked before the snippet ran. */
-async function exportSvg(canvas: CanvasHandle, options: RunOptions): Promise<string | null> {
+async function exportSvg(
+  canvas: CanvasHandle,
+  options: RunOptions,
+  meta: DiagramMeta | null,
+): Promise<string | null> {
   if (options.svg === undefined) return null;
   const target = resolveOutputPath(options.svg, options.cwd);
   try {
     const exported = await canvas.svg({ padding: options.padding });
-    return await writeText(target, exported.svg);
+    return await writeText(target, stampSvg(exported.svg, meta));
   } catch (error) {
     throw new ExportError(`the document was saved but the SVG failed: ${firstLine(error)}`, {
       cause: error,
