@@ -182,7 +182,7 @@ function parseDeclaration(source: string): ParsedDeclaration | null {
   // Everything between the closing parenthesis and the body or the semicolon
   // is the return type, if the declaration has one.
   const tail = source.slice(closeParen + 1);
-  const end = tail.search(/[{;]/);
+  const end = returnTypeEnd(tail);
   const returnType = (end === -1 ? tail : tail.slice(0, end)).trim();
   if (returnType !== "" && !returnType.startsWith(":")) return null;
 
@@ -195,6 +195,45 @@ function parseDeclaration(source: string): ParsedDeclaration | null {
   const parameters = source.slice(openParen, closeParen + 1);
   const signature = collapse(`${name}${parameters}${returnType}`);
   return { name, kind, signature };
+}
+
+/**
+ * Characters a `{` can legally follow inside a type, as opposed to opening a
+ * body. `attribute` returns `{ textId: TLShapeId; lineId: TLShapeId }`, so the
+ * brace right after the `:` belongs to the type; the one after the closing `}`
+ * is the function body.
+ */
+const TYPE_CONTINUES = new Set([":", "|", "&", "<", ",", "(", "["]);
+
+/**
+ * Where a declaration's return type stops: the index of the `;` that ends a
+ * method signature or the `{` that opens a body, or -1 for neither.
+ *
+ * Cutting at the first `{` instead would truncate an object return type to a
+ * bare colon, which is what `helpers.attribute` printed before this existed.
+ */
+function returnTypeEnd(tail: string): number {
+  let depth = 0;
+  let previous = "";
+  let beforePrevious = "";
+  for (let i = 0; i < tail.length; i += 1) {
+    const character = tail[i] ?? "";
+    if (/\s/.test(character)) continue;
+    if (character === "}") {
+      if (depth > 0) depth -= 1;
+    } else if (character === "{") {
+      // A lone `>` closes a generic (`Promise<Imported>`) and the brace after
+      // it is the body; only the `>` of an arrow keeps the type going.
+      const afterArrow = previous === ">" && beforePrevious === "=";
+      if (depth === 0 && !afterArrow && !TYPE_CONTINUES.has(previous)) return i;
+      depth += 1;
+    } else if (character === ";" && depth === 0) {
+      return i;
+    }
+    beforePrevious = previous;
+    previous = character;
+  }
+  return -1;
 }
 
 /** The index of the `)` that closes the `(` at `from`, or -1. */
@@ -211,9 +250,20 @@ function matchingParen(source: string, from: number): number {
   return -1;
 }
 
-/** Newlines and runs of spaces become single spaces, so a signature is one line. */
+/**
+ * Newlines and runs of spaces become single spaces, so a signature is one line.
+ *
+ * The trailing comma goes too: it is how a multi-line parameter list is written
+ * and it is a syntax error on one line, and the point of the reference is a
+ * line an agent can copy.
+ */
 function collapse(text: string): string {
-  return text.replace(/\s+/g, " ").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")").trim();
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/,\s*\)/g, ")")
+    .replace(/\s+\)/g, ")")
+    .trim();
 }
 
 interface BlockTags {

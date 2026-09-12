@@ -124,6 +124,25 @@ function cli(args: string[], stdin?: string): Promise<CliResult> {
   });
 }
 
+/**
+ * The names on the page's `Helpers` interface, read from the source.
+ *
+ * This is the list `api` has to cover, and taking it from the interface rather
+ * than retyping it here is what makes a new helper with a broken doc block
+ * fail the test instead of quietly going unlisted.
+ */
+async function helpersInterfaceMembers(): Promise<string[]> {
+  const source = await fs.readFile(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "../../src/page/helpers/index.ts"),
+    "utf8",
+  );
+  const body = /export interface Helpers \{([\s\S]*?)\n\}/.exec(source)?.[1];
+  if (body === undefined) throw new Error("could not find the Helpers interface");
+  const names = [...body.matchAll(/^ {2}([A-Za-z_$][\w$]*)\(/gm)].map((match) => match[1] ?? "");
+  if (names.length === 0) throw new Error("the Helpers interface parsed as empty");
+  return names;
+}
+
 /** Draw the four-box example into `diagram.tldr`. */
 async function drawFourBoxes(): Promise<void> {
   await fs.writeFile(path.join(dir, "draw.js"), FOUR_BOXES);
@@ -288,11 +307,15 @@ describe("api", () => {
 
     const docs = JSON.parse(result.stdout) as ApiJson[];
     const byName = new Map(docs.map((doc) => [doc.name, doc]));
-    for (const name of ["box", "connect", "mermaid"]) {
+
+    // Every member of the `Helpers` interface, not a sample: a helper missing
+    // from the reference is a malformed JSDoc block, and the only way that
+    // shows up is by checking the bag the page actually hands a snippet.
+    for (const name of await helpersInterfaceMembers()) {
       const doc = byName.get(name);
       expect(doc, `api does not document ${name}`).toBeDefined();
-      expect(doc?.summary).not.toBe("");
-      expect(doc?.examples.length ?? 0).toBeGreaterThan(0);
+      expect(doc?.summary, `${name} has no summary`).not.toBe("");
+      expect(doc?.examples.length ?? 0, `${name} has no @example`).toBeGreaterThan(0);
       expect(doc?.signature).toContain(name);
     }
   });

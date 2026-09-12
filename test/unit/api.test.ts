@@ -130,6 +130,43 @@ describe("extractHelperDocs", () => {
     );
   });
 
+  it("keeps an object return type whole and drops the multi-line trailing comma", () => {
+    // `helpers.attribute` is the real case: cutting at the first `{` reported
+    // its signature as `attribute(...):` with the return type missing, and the
+    // dangling comma a wrapped parameter list ends on is a syntax error on the
+    // one line the reference prints.
+    const source = `
+/**
+ * Write a label off one side of a box.
+ *
+ * @example helpers.attribute('user', 'email', 'right')
+ */
+  function attribute(
+    owner: ShapeKey,
+    label: string,
+    side: Side,
+    opts: AttributeOptions = {},
+  ): { textId: TLShapeId; lineId: TLShapeId } {
+    return place(owner, label, side, opts);
+  }
+
+/**
+ * The same shape as an interface member, which ends on a semicolon.
+ *
+ * @example helpers.split('a')
+ */
+  split(key: ShapeKey): { left: TLShapeId; right: TLShapeId };
+`;
+    const parsed = byName(extractHelperDocs([{ path: "fixture.ts", text: source }]));
+    expect(parsed.get("attribute")?.signature).toBe(
+      "attribute(owner: ShapeKey, label: string, side: Side, opts: AttributeOptions = {}):" +
+        " { textId: TLShapeId; lineId: TLShapeId }",
+    );
+    expect(parsed.get("split")?.signature).toBe(
+      "split(key: ShapeKey): { left: TLShapeId; right: TLShapeId }",
+    );
+  });
+
   it("takes the first paragraph as the summary and drops the rest", () => {
     const box = found.get("box");
     expect(box?.summary).toBe("Create a box and return its id.");
