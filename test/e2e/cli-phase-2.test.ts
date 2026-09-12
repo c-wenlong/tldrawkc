@@ -178,6 +178,17 @@ function readableSvg(svg: string): string {
     .replace(/&amp;/g, "&");
 }
 
+/**
+ * A PNG's real pixel size, read from its IHDR chunk.
+ *
+ * The header starts at byte 16 with width then height as big-endian 32-bit
+ * integers, which is fixed by the format, so this needs no decoder.
+ */
+async function pngSize(file: string): Promise<{ width: number; height: number }> {
+  const bytes = await fs.readFile(file);
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
 describe("inspect", () => {
   it("reports every shape and binding from a document a snippet drew", async () => {
     await drawFourBoxes();
@@ -230,6 +241,13 @@ describe("export", () => {
     expect(json.png?.path).toBe(path.join(dir, "out.png"));
     // A blank or font-less canvas compresses to far less than this.
     expect((await fs.stat(path.join(dir, "out.png"))).size).toBeGreaterThan(10_000);
+
+    // CLI.md promises pixels. tldraw's `toImage` reports the framed region in
+    // page units, which at the default pixel ratio is half the file, so read
+    // the answer back out of the PNG header rather than trusting it.
+    const header = await pngSize(path.join(dir, "out.png"));
+    expect(json.png?.width).toBe(header.width);
+    expect(json.png?.height).toBe(header.height);
   });
 
   it("writes an SVG carrying every label, and both formats at once", async () => {

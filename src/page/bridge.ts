@@ -177,8 +177,7 @@ function resolveIds(editor: Editor, ids: string[] | undefined): TLShapeId[] {
   return ids.map((id) => toShapeId(id));
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
+function bytesToBase64(bytes: Uint8Array): string {
   // btoa wants a binary string, and spreading a megabyte of bytes into
   // String.fromCharCode blows the argument limit, so go a chunk at a time.
   let binary = "";
@@ -187,6 +186,22 @@ async function blobToBase64(blob: Blob): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(binary);
+}
+
+/**
+ * A PNG's pixel size, read from the file itself.
+ *
+ * `toImage` reports the framed region in page units, and multiplying that by
+ * the pixel ratio does not reliably land on the canvas the rasteriser made:
+ * measured on the mermaid fixture, 1288.5024 page units at ratio 2 came back
+ * as a 2576-pixel PNG, not the 2577 the arithmetic predicts. The header is the
+ * only number that matches the file an agent goes on to read, so take it from
+ * there. Width and height are big-endian 32-bit integers at bytes 16 and 20,
+ * which the format fixes, so this needs no decoder.
+ */
+function pngPixelSize(bytes: Uint8Array): { width: number; height: number } {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
 }
 
 /**
@@ -317,10 +332,14 @@ export function installBridge(editor: Editor): Bridge {
         pixelRatio,
         background,
       });
+      const bytes = new Uint8Array(await image.blob.arrayBuffer());
+      // CLI.md promises pixels under `width` and `height`. `image.width` and
+      // `image.height` are page units, so read the PNG's own header instead.
+      const size = pngPixelSize(bytes);
       return {
-        pngBase64: await blobToBase64(image.blob),
-        width: image.width,
-        height: image.height,
+        pngBase64: bytesToBase64(bytes),
+        width: size.width,
+        height: size.height,
         bounds: bounds ?? { x: 0, y: 0, w: 0, h: 0 },
       };
     },
