@@ -1,0 +1,30 @@
+{
+  // The node build. Emits src/cli and src/lib to dist/, which is what
+  // bin/tldrawkc and the package's "exports" point at. Two sibling configs
+  // cover the other two environments this repo has: tsconfig.test.json adds
+  // the test files and the config files (same options, no emit), and
+  // tsconfig.page.json covers the browser bundle, which needs JSX and the DOM
+  // lib that the node side deliberately does without.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/cli/**/*.ts", "src/lib/**/*.ts"]
+}

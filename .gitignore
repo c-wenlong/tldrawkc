@@ -1,0 +1,27 @@
+# Build output. `npm run build` rebuilds all of it.
+dist/
+coverage/
+
+# Dependencies.
+node_modules/
+
+# Atomic writes go through a sibling temp file; a crash can leave one behind.
+*.tmp
+
+# Scratch output: screenshots and experiments an agent made while iterating.
+# Committed artefacts are the .tldr and the .svg, and they live in the repo
+# that consumes them, not here (DECISIONS.md D8).
+out/
+scratch/
+*.local.png
+
+# Editors and OS noise.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Environment.
+.env
+.env.*
+!.env.example

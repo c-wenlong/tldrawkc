@@ -1,0 +1,98 @@
+name: CI
+
+# Every push to the default branch and every pull request aimed at it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Least privilege. Nothing here writes to the repository, so the GITHUB_TOKEN
+# only needs to read code.
+# https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+permissions:
+  contents: read
+
+# Cancel a run as soon as a newer one supersedes it. The key is the pull
+# request number when there is one and the git ref otherwise, because a branch
+# push and its pull request run under different refs and would otherwise land
+# in separate groups and both keep burning minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        # 22 matches the engines floor in package.json. The npm cache is keyed
+        # on package-lock.json, so it is reused until a dependency moves.
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        # ci, not install: it installs exactly what the lockfile pins and fails
+        # outright when package.json and package-lock.json have drifted apart.
+        run: npm ci
+
+      # Four separate steps on purpose. Each fails with a different signal, so
+      # a red run says what kind of thing broke without anyone opening the log:
+      # style, types, behaviour, or the build.
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        # tsc for src/cli and src/lib, Vite for src/page. The page build is
+        # the one that would catch a broken tldraw import or a missing asset.
+        run: npm run build
+
+  e2e:
+    name: End-to-end (real Chromium)
+    runs-on: ubuntu-latest
+    # A browser download plus a headless run. Twenty minutes is generous
+    # enough for a cold Playwright cache.
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        # The tool depends on playwright-core, which ships no browser
+        # (DECISIONS.md D9), so CI installs one explicitly. The `playwright`
+        # devDependency is pinned to the same version as playwright-core, so
+        # this npx call runs the local copy and fetches exactly the revision
+        # playwright-core expects rather than whatever the registry has today.
+        run: npx playwright install chromium --with-deps
+
+      - name: Build
+        # The e2e suite drives the built page, not the sources.
+        run: npm run build
+
+      - name: End-to-end tests
+        run: npm run test:e2e
