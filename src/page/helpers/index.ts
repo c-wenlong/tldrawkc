@@ -116,7 +116,11 @@ export interface HelpersHandle {
  * `function name(` line for the `api` command to find.
  */
 export function createHelpers(editor: Editor): HelpersHandle {
-  let startedEmpty = true;
+  // Which pages held nothing when the snippet started, by page id. One boolean
+  // was not enough: a snippet that starts on an empty page can call
+  // `editor.setCurrentPage` and then `clear()` on a page full of someone
+  // else's work, and the single flag would have said yes.
+  let emptyAtStart = new Set<string>();
 
   /**
    * Create or update a labelled geo shape and return its id.
@@ -176,15 +180,16 @@ export function createHelpers(editor: Editor): HelpersHandle {
    * Delete every shape on the current page and return how many went.
    *
    * Refused unless this snippet created the document, or `force` is passed.
-   * Created means the current page held zero shapes when `exec` started: a
-   * snippet that drew the whole picture may wipe it and start again, a snippet
-   * handed someone else's diagram may not.
+   * Created means this page held zero shapes when `exec` started, recorded per
+   * page rather than once: a snippet that drew the whole picture may wipe it
+   * and start again, a snippet handed someone else's diagram may not, and
+   * switching pages mid-snippet must not launder the difference.
    *
    * @example
    * helpers.clear({ force: true })
    */
   function clear(opts: ClearOptions = {}): number {
-    return clearPage(editor, opts, startedEmpty);
+    return clearPage(editor, opts, emptyAtStart.has(editor.getCurrentPageId()));
   }
 
   /**
@@ -384,7 +389,12 @@ export function createHelpers(editor: Editor): HelpersHandle {
   return {
     helpers,
     beginExec: () => {
-      startedEmpty = editor.getCurrentPageShapes().length === 0;
+      emptyAtStart = new Set(
+        editor
+          .getPages()
+          .filter((page) => editor.getSortedChildIdsForParent(page.id).length === 0)
+          .map((page) => page.id),
+      );
     },
   };
 }
