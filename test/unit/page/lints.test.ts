@@ -16,6 +16,7 @@ import {
   distanceToPolygon,
   emptyLabels,
   friendlessArrows,
+  hasBlockingLints,
   insetRect,
   intersectionArea,
   isContainer,
@@ -26,11 +27,13 @@ import {
   overlappingShapes,
   overlappingText,
   isConvexPolygon,
+  missingTopic,
   pointInPolygon,
   runLints,
   segmentCrossesConvex,
   segmentCrossesRect,
   segmentReachesInside,
+  severityOf,
   unreadableLabels,
   type LintBinding,
   type LintShape,
@@ -965,5 +968,45 @@ describe("runLints over every rule", () => {
         "unreadable-label",
       ]),
     );
+  });
+});
+
+describe("missing-topic", () => {
+  it("says nothing when the caller supplied no document", () => {
+    expect(missingTopic(undefined)).toEqual([]);
+    expect(runLints([box("shape:a")], [])).toEqual([]);
+  });
+
+  it("fires on a document with no metadata at all", () => {
+    const lints = missingTopic({ meta: null });
+    expect(lints.map((lint) => lint.rule)).toEqual(["missing-topic"]);
+    expect(lints[0]?.shapeIds).toEqual([]);
+  });
+
+  it("fires on metadata whose topic is blank", () => {
+    expect(missingTopic({ meta: { topic: "   " } })).toHaveLength(1);
+  });
+
+  it("says nothing once a topic is set", () => {
+    expect(missingTopic({ meta: { topic: "dot-product" } })).toEqual([]);
+  });
+
+  it("is a warning, so it never turns into exit code 3 on its own", () => {
+    const lints = runLints([box("shape:a")], [], { meta: null });
+    expect(lints.map((lint) => lint.rule)).toEqual(["missing-topic"]);
+    expect(lints.every((lint) => severityOf(lint) === "warn")).toBe(true);
+    expect(hasBlockingLints(lints)).toBe(false);
+  });
+
+  it("does not hide a real lint sitting beside it", () => {
+    const lints = runLints([arrow("shape:loose")], [], { meta: null });
+    expect(lints.map((lint) => lint.rule)).toEqual(["friendless-arrow", "missing-topic"]);
+    expect(hasBlockingLints(lints)).toBe(true);
+  });
+});
+
+describe("severityOf", () => {
+  it("treats a rule that says nothing as an error", () => {
+    expect(severityOf({ rule: "x", shapeIds: [], message: "" })).toBe("error");
   });
 });

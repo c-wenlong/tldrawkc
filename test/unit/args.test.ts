@@ -298,3 +298,89 @@ describe("command options", () => {
     expect(parse(["api", "--json", "--quiet"]).ok).toBe(true);
   });
 });
+
+describe("list", () => {
+  it("takes no positional", () => {
+    const result = parse(["list"]);
+    expect(result.ok && result.parsed.args).toEqual([]);
+  });
+
+  it("takes one directory", () => {
+    const result = parse(["list", "learn/assets", "--json"]);
+    expect(result.ok && result.parsed.args).toEqual(["learn/assets"]);
+    expect(result.ok && result.parsed.globals.json).toBe(true);
+  });
+
+  it("refuses two", () => {
+    const result = parse(["list", "a", "b"]);
+    expect(result.ok).toBe(false);
+  });
+
+  it("refuses a flag that belongs to another command", () => {
+    expect(parse(["list", "--topic", "a"]).ok).toBe(false);
+  });
+});
+
+describe("meta", () => {
+  it("takes a subcommand and a file", () => {
+    const result = parse(["meta", "set", "a.tldr", "--topic", "dot-product"]);
+    expect(result.ok && result.parsed.args).toEqual(["set", "a.tldr"]);
+    expect(result.ok && result.parsed.options.topic).toBe("dot-product");
+  });
+
+  it("refuses a subcommand it does not have", () => {
+    const result = parse(["meta", "get", "a.tldr"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain("is not a subcommand");
+  });
+
+  it("refuses a missing file", () => {
+    const result = parse(["meta", "set"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain("set <file.tldr>");
+  });
+
+  it("collects a repeated --concept", () => {
+    const result = parse(["meta", "set", "a.tldr", "--concept", "one", "--concept", "two"]);
+    expect(result.ok && result.parsed.options.concepts).toEqual(["one", "two"]);
+  });
+
+  it("splits a comma list inside one --concept, so both spellings agree", () => {
+    const repeated = parse(["meta", "set", "a.tldr", "--concept", "one", "--concept", "two"]);
+    const commas = parse(["meta", "set", "a.tldr", "--concept", "one, two"]);
+    expect(commas.ok && commas.parsed.options.concepts).toEqual(
+      repeated.ok ? repeated.parsed.options.concepts : null,
+    );
+  });
+
+  it("leaves concepts undefined when the flag never appeared", () => {
+    const result = parse(["meta", "set", "a.tldr", "--topic", "a"]);
+    expect(result.ok && result.parsed.options.concepts).toBeUndefined();
+  });
+});
+
+describe("new with metadata", () => {
+  it("takes every metadata flag", () => {
+    const result = parse([
+      "new",
+      "a.tldr",
+      "--title",
+      "Dot product",
+      "--topic",
+      "dot-product",
+      "--concept",
+      "vectors",
+      "--source",
+      "session-42",
+    ]);
+    expect(result.ok && result.parsed.options.title).toBe("Dot product");
+    expect(result.ok && result.parsed.options.topic).toBe("dot-product");
+    expect(result.ok && result.parsed.options.concepts).toEqual(["vectors"]);
+    expect(result.ok && result.parsed.options.source).toBe("session-42");
+  });
+
+  it("still refuses them on a command that has no metadata", () => {
+    expect(parse(["shot", "a.tldr", "--topic", "a"]).ok).toBe(false);
+    expect(parse(["run", "a.tldr", "--eval", "1", "--title", "x"]).ok).toBe(false);
+  });
+});

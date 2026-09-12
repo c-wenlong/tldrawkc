@@ -22,7 +22,7 @@
     <script>
       (() => {
         /** Everything the stand-in knows, reset by `load`. */
-        const state = { pages: ["Page 1"], page: "Page 1", shapes: [] };
+        const state = { pages: ["Page 1"], page: "Page 1", shapes: [], documentMeta: {} };
 
         const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -66,6 +66,27 @@
             return shapeId;
           },
           getLints: () => lints(),
+
+          /*
+            Document metadata, the one thing Node reads straight out of the
+            saved JSON. The stand-in keeps a bag and puts it on a real
+            `document:document` record in `save`, because `new --topic` and
+            `meta set` are Node decisions that need somewhere to write.
+          */
+          meta(patch) {
+            if (patch === undefined) return state.documentMeta.tldrawkc ?? null;
+            const held = state.documentMeta.tldrawkc ?? {};
+            const next = {
+              kc: 1,
+              title: patch.title ?? held.title ?? "",
+              topic: patch.topic ?? held.topic ?? "",
+              concepts: patch.concepts ?? held.concepts ?? [],
+              source: patch.source ?? held.source ?? "",
+              created: held.created || new Date().toISOString(),
+            };
+            state.documentMeta = { ...state.documentMeta, tldrawkc: next };
+            return next;
+          },
 
           /*
             A deliberately dumb mermaid importer.
@@ -152,9 +173,12 @@
             state.pages = ["Page 1"];
             state.page = "Page 1";
             state.shapes = [];
+            state.documentMeta = {};
             if (tldrJson) {
               const parsed = JSON.parse(tldrJson);
               state.shapes = (parsed.records ?? []).filter((record) => record.typeName === "shape");
+              const document = (parsed.records ?? []).find((r) => r.typeName === "document");
+              if (document && document.meta) state.documentMeta = document.meta;
               if (Array.isArray(parsed.pages) && parsed.pages.length > 0) state.pages = parsed.pages;
             }
             return { pages: [...state.pages], shapeCount: state.shapes.length };
@@ -194,7 +218,16 @@
               tldrawFileFormatVersion: 1,
               schema: { schemaVersion: 2 },
               pages: state.pages,
-              records: state.shapes,
+              records: [
+                ...state.shapes,
+                {
+                  gridSize: 10,
+                  name: "",
+                  meta: state.documentMeta,
+                  id: "document:document",
+                  typeName: "document",
+                },
+              ],
             }),
 
           shot(options = {}) {
@@ -234,6 +267,7 @@
                 toAnchor: shape.bindings?.[1] ? { x: 0, y: 0.5 } : null,
               })),
             lints: lints(),
+            meta: helpers.meta() ?? null,
           }),
 
           lints,

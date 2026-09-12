@@ -4,11 +4,15 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  DEFAULT_LIST_DIR,
   PACKAGE_ROOT,
   PAGE_DIST_DIR,
   PAGE_INDEX_HTML,
   PAGE_SRC_DIR,
+  relativeToDir,
+  resolveListDir,
   resolveTldrPath,
+  siblingPath,
   tempShotPath,
   tempSiblingPath,
 } from "../../src/lib/paths.js";
@@ -80,5 +84,36 @@ describe("tempSiblingPath", () => {
       Array.from({ length: 100 }, () => tempSiblingPath("/work/a.tldr")),
     );
     expect(names.size).toBe(100);
+  });
+});
+
+describe("resolveListDir", () => {
+  it("defaults to learn/assets under the working directory", () => {
+    expect(resolveListDir(undefined, "/repo")).toBe(path.join("/repo", DEFAULT_LIST_DIR));
+  });
+
+  it("resolves a relative argument against the working directory", () => {
+    expect(resolveListDir("diagrams", "/repo")).toBe(path.join("/repo", "diagrams"));
+  });
+
+  it("takes an absolute argument as it is", () => {
+    expect(resolveListDir("/elsewhere/x", "/repo")).toBe(path.join("/elsewhere", "x"));
+  });
+});
+
+describe("siblingPath", () => {
+  it("swaps the extension and keeps the directory", () => {
+    expect(siblingPath("/a/b/dot-product.tldr", ".svg")).toBe("/a/b/dot-product.svg");
+  });
+
+  it("handles a name with dots in it", () => {
+    expect(siblingPath("/a/v1.2.tldr", ".png")).toBe("/a/v1.2.png");
+  });
+});
+
+describe("relativeToDir", () => {
+  it("is forward-slashed, so a listing reads the same on every platform", () => {
+    const file = path.join("/repo", "learn", "assets", "a", "b.tldr");
+    expect(relativeToDir(path.join("/repo", "learn", "assets"), file)).toBe("a/b.tldr");
   });
 });

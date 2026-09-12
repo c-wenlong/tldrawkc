@@ -12,6 +12,8 @@
  */
 
 export {
+  hasBlockingLints,
+  severityOf,
   BRIDGE_TIMEOUT_MS,
   ChromiumNotFoundError,
   EXEC_TIMEOUT_MS,
@@ -31,6 +33,7 @@ export {
   type InspectData,
   type InspectShape,
   type Lint,
+  type LintSeverity,
   type LoadResult,
   type OpenCanvasOptions,
   type PingResult,
@@ -66,6 +69,36 @@ export {
   type ShotCommandOptions,
   type ShotCommandResult,
 } from "./canvas.js";
+
+export {
+  list,
+  type DiagramEntry,
+  type DiagramError,
+  type ListOptions,
+  type ListResult,
+  type SiblingFile,
+} from "./list.js";
+
+export {
+  applyMeta,
+  isEmptyPatch,
+  mergeDocumentMeta,
+  readDocumentMeta,
+  readMeta,
+  readTldrFacts,
+  setMeta,
+  stampSvg,
+  validatePatch,
+  META_KEY,
+  META_VERSION,
+  SLUG_PATTERN,
+  SVG_TOPIC_ATTRIBUTE,
+  type DiagramMeta,
+  type MetaPatch,
+  type SetMetaOptions,
+  type SetMetaResult,
+  type TldrFacts,
+} from "./meta.js";
 
 export {
   buildApiReference,
@@ -111,6 +144,7 @@ export {
   API_JSON,
   API_SOURCE_FILES,
   CLI_ENTRY,
+  DEFAULT_LIST_DIR,
   DIST_DIR,
   HELPERS_SRC_DIR,
   doctorProbePath,
@@ -118,8 +152,11 @@ export {
   PAGE_DIST_DIR,
   PAGE_INDEX_HTML,
   PAGE_SRC_DIR,
+  relativeToDir,
+  resolveListDir,
   resolveOutputPath,
   resolveTldrPath,
+  siblingPath,
   tempShotPath,
   tempSiblingPath,
 } from "./paths.js";

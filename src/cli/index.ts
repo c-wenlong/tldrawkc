@@ -6,6 +6,8 @@
  *   tldrawkc run <file.tldr> ...      load, run a snippet, save, export
  *   tldrawkc shot <file.tldr>         a PNG of what is there
  *   tldrawkc inspect <file.tldr>      what is on the canvas, as text or JSON
+ *   tldrawkc list [dir]               every .tldr in a directory, with its metadata
+ *   tldrawkc meta set <file.tldr>     stamp a topic on an existing document
  *   tldrawkc export <file.tldr> ...   the SVG or PNG that gets committed
  *   tldrawkc from-mermaid <file.tldr> lift a mermaid flowchart onto the canvas
  *   tldrawkc api                      what a snippet can call
@@ -37,11 +39,13 @@ import {
   type RunResult,
 } from "../lib/canvas.js";
 import { readApiReference, type HelperDoc } from "../lib/api.js";
+import { list, type ListResult } from "../lib/list.js";
+import { setMeta, type DiagramMeta, type MetaPatch, type SetMetaResult } from "../lib/meta.js";
 import { doctor, type DoctorReport } from "../lib/doctor.js";
 import { isTldrawkcError, SnippetError, UsageError } from "../lib/errors.js";
 import { readText } from "../lib/files.js";
 import { resolveOutputPath } from "../lib/paths.js";
-import type { InspectData, Lint } from "../lib/browser.js";
+import { severityOf, type InspectData, type Lint } from "../lib/browser.js";
 import {
   EXIT,
   IMPLEMENTED_COMMANDS,
@@ -56,6 +60,10 @@ const USAGE = `tldrawkc <command> [file] [options]
 Commands
   new <file.tldr>                create an empty document, refuses to overwrite
       --from <other.tldr>        start from a copy of another document
+      --title <text>             document metadata: a human title
+      --topic <slug>             document metadata: one vocabulary slug
+      --concept <slug>           document metadata: a concept slug, repeatable
+      --source <text>            document metadata: what prompted this diagram
   run <file.tldr>                load, run a snippet, save, export
       --code <path>              JavaScript file, or - to read stdin
       --eval <source>            inline source (mutually exclusive with --code)
@@ -66,7 +74,13 @@ Commands
   shot <file.tldr>               screenshot without running anything
       -o, --output <out.png>     where the PNG goes (default: a temp file)
       --ids a,b,c                frame only these shapes
-  inspect <file.tldr>            print every shape, binding and lint. Exits 3 on lints
+  inspect <file.tldr>            print every shape, binding, lint and the metadata. Exits 3 on lints
+  list [dir]                     every .tldr in a directory (default learn/assets), no browser
+  meta set <file.tldr>           stamp metadata on an existing document, no browser
+      --title <text>             a human title
+      --topic <slug>             one vocabulary slug
+      --concept <slug>           a concept slug, repeatable
+      --source <text>            what prompted this diagram
   export <file.tldr>             write the files that get committed
       --svg <out.svg>            self-contained SVG, fonts inlined
       --png <out.png>            PNG at --pixel-ratio
@@ -137,12 +151,29 @@ function printDoctor(report: DoctorReport): void {
   out(report.ok ? "doctor: ready" : "doctor: not ready");
 }
 
-/** One line per lint, the format `run` and (from phase 2) `inspect` share. */
+/**
+ * One line per lint, the format `run` and `inspect` share.
+ *
+ * The first column is the severity, so a warning that does not change the
+ * exit code does not read like one that does.
+ */
 function printLints(lints: Lint[]): void {
   for (const lint of lints) {
     const ids = lint.shapeIds.length > 0 ? ` [${lint.shapeIds.join(", ")}]` : "";
-    out(`lint  ${lint.rule}${ids}  ${lint.message}`);
+    const tag = severityOf(lint) === "warn" ? "warn" : "lint";
+    out(`${tag}  ${lint.rule}${ids}  ${lint.message}`);
   }
+}
+
+/** `topic=x  concepts=a,b  "title"`, or nothing when there is no metadata. */
+function metaLine(meta: DiagramMeta | null): string {
+  if (meta === null) return "meta  (none)";
+  const parts = [`topic=${meta.topic === "" ? "(none)" : meta.topic}`];
+  if (meta.concepts.length > 0) parts.push(`concepts=${meta.concepts.join(",")}`);
+  if (meta.source !== "") parts.push(`source=${meta.source}`);
+  if (meta.created !== "") parts.push(meta.created);
+  if (meta.title !== "") parts.push(JSON.stringify(meta.title));
+  return `meta  ${parts.join("  ")}`;
 }
 
 function printRun(result: RunResult, allowLints: boolean): void {
@@ -263,12 +294,106 @@ async function runNew(
   const result = await newDocument({
     file,
     from: options.from,
+    meta: metaPatch(options),
     chromium: globals.chromium,
     headed: globals.headed,
   });
 
   if (globals.json) printJson(result);
-  else if (!globals.quiet) out(result.file);
+  else if (!globals.quiet) {
+    out(result.file);
+    if (result.meta) out(metaLine(result.meta));
+  }
+  return EXIT.ok;
+}
+
+/** The flags `new` and `meta set` share, as the patch the library takes. */
+function metaPatch(options: CommandOptions): MetaPatch {
+  return {
+    title: options.title,
+    topic: options.topic,
+    concepts: options.concepts,
+    // `--source` is free text here. `from-mermaid` reads the same flag as a
+    // path, and the two never reach the same command.
+    source: options.source,
+  };
+}
+
+/**
+ * A fixed-width table of a directory of diagrams.
+ *
+ * Topic first, because that is the question the command exists to answer, and
+ * `(none)` rather than a blank so a missing one is visible in a column of
+ * present ones.
+ */
+function printList(result: ListResult): void {
+  const rows = result.diagrams.map((entry) => ({
+    topic: entry.meta?.topic === undefined || entry.meta.topic === ""
+      ? "(none)"
+      : entry.meta.topic,
+    shapes: String(entry.shapes),
+    svg: entry.svg.exists ? "yes" : "no",
+    path: entry.relative,
+  }));
+  const width = (pick: (row: (typeof rows)[number]) => string, header: string): number =>
+    Math.max(header.length, ...rows.map((row) => pick(row).length), 0);
+  const topicWidth = width((row) => row.topic, "topic");
+  const shapeWidth = width((row) => row.shapes, "shapes");
+
+  out(`${"topic".padEnd(topicWidth)}  ${"shapes".padStart(shapeWidth)}  svg  path`);
+  for (const row of rows) {
+    out(
+      `${row.topic.padEnd(topicWidth)}  ${row.shapes.padStart(shapeWidth)}  ` +
+        `${row.svg.padEnd(3)}  ${row.path}`,
+    );
+  }
+  for (const error of result.errors) {
+    process.stderr.write(`error  ${error.relative}  ${printable(error.message)}\n`);
+  }
+
+  const tagged = result.diagrams.filter((entry) => (entry.meta?.topic ?? "") !== "").length;
+  const total = result.diagrams.length;
+  out(
+    `${String(total)} diagram${total === 1 ? "" : "s"}, ${String(tagged)} with a topic, ` +
+      `${String(result.errors.length)} unreadable`,
+  );
+}
+
+async function runList(
+  dir: string | undefined,
+  globals: GlobalOptions,
+): Promise<number> {
+  const result = await list({ dir });
+  if (globals.json) {
+    printJson({
+      dir: result.dir,
+      diagrams: result.diagrams,
+      errors: result.errors,
+      ms: result.ms,
+    });
+  } else if (!globals.quiet) {
+    printList(result);
+  }
+  // A file that will not parse is data, not a failure of the command: the
+  // caller asked what is in the directory and got a complete answer.
+  return EXIT.ok;
+}
+
+function printMetaSet(result: SetMetaResult): void {
+  out(result.changed ? `wrote ${result.file}` : `unchanged ${result.file}`);
+  out(metaLine(result.meta));
+}
+
+async function runMeta(
+  args: string[],
+  globals: GlobalOptions,
+  options: CommandOptions,
+): Promise<number> {
+  // parseCommand has already refused any other subcommand.
+  const file = args[1] ?? "";
+  const result = await setMeta({ file, patch: metaPatch(options) });
+  if (globals.json) printJson(result);
+  else if (!globals.quiet) printMetaSet(result);
   return EXIT.ok;
 }
 
@@ -299,6 +424,7 @@ function printInspect(canvas: InspectData): void {
     out(`bind  ${binding.arrow}  ${binding.from ?? "?"} -> ${binding.to ?? "?"}`);
   }
 
+  out(metaLine(canvas.meta ?? null));
   printLints(canvas.lints);
 }
 
@@ -466,6 +592,10 @@ async function main(): Promise<number> {
       return await runNew(file, globals, options);
     case "inspect":
       return await runInspect(file, globals);
+    case "list":
+      return await runList(args[0], globals);
+    case "meta":
+      return await runMeta(args, globals, options);
     case "export":
       return await runExport(file, globals, options);
     case "from-mermaid":

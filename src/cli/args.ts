@@ -48,6 +48,25 @@ export const GLOBAL_OPTIONS = {
 } as const satisfies OptionsConfig;
 
 /**
+ * The metadata flags, shared by `new` and `meta set`.
+ *
+ * One declaration spread into both, because a diagram stamped at creation and
+ * a diagram stamped afterwards have to end up with the same fields, and two
+ * hand-maintained lists would not stay that way.
+ *
+ * `--source` means different things to `from-mermaid` (a path to read from)
+ * and to these two (free text: what prompted the diagram). They are different
+ * commands and the allowlist below is per command, so nothing collides; the
+ * help text says which is which.
+ */
+export const META_OPTIONS = {
+  title: { type: "string" },
+  topic: { type: "string" },
+  concept: { type: "string", multiple: true },
+  source: { type: "string" },
+} as const satisfies OptionsConfig;
+
+/**
  * Flags each command owns, from the command table in CLI.md.
  *
  * A flag lives here rather than in the global table when passing it to
@@ -69,6 +88,7 @@ export const COMMAND_OPTIONS = {
   },
   new: {
     from: { type: "string" },
+    ...META_OPTIONS,
   },
   export: {
     svg: { type: "string" },
@@ -80,6 +100,7 @@ export const COMMAND_OPTIONS = {
     append: { type: "boolean" },
     shot: { type: "string" },
   },
+  meta: META_OPTIONS,
 } as const satisfies Record<string, OptionsConfig>;
 
 /** Every flag the parser has to recognise, which is the union of the above. */
@@ -90,6 +111,7 @@ const ALL_OPTIONS: OptionsConfig = {
   ...COMMAND_OPTIONS.new,
   ...COMMAND_OPTIONS.export,
   ...COMMAND_OPTIONS["from-mermaid"],
+  ...COMMAND_OPTIONS.meta,
 };
 
 /** Defaults for the numeric globals, from the "numbers" table in ARCHITECTURE.md. */
@@ -144,6 +166,18 @@ export interface CommandOptions {
   source: string | undefined;
   /** `from-mermaid --append`. */
   append: boolean;
+  /** `--title` on `new` and `meta set`. */
+  title: string | undefined;
+  /** `--topic` on `new` and `meta set`. */
+  topic: string | undefined;
+  /**
+   * `--concept` on `new` and `meta set`, repeatable.
+   *
+   * Commas inside one occurrence are split too, so `--concept a,b` and
+   * `--concept a --concept b` agree. A slug can never contain a comma, and the
+   * rest of this CLI already takes comma lists (`--ids`).
+   */
+  concepts: string[] | undefined;
 }
 
 export interface ParsedCommand {
@@ -167,6 +201,8 @@ export const IMPLEMENTED_COMMANDS = [
   "from-mermaid",
   "help",
   "inspect",
+  "list",
+  "meta",
   "new",
   "run",
   "shot",
@@ -181,8 +217,29 @@ export const PLANNED_COMMANDS: Record<string, string> = {
   serve: "phase 4",
 };
 
-/** Commands that take exactly one positional, the document. */
-const NEEDS_FILE = new Set(["run", "shot", "new", "inspect", "export", "from-mermaid"]);
+/**
+ * How many positionals each command takes, and what to call them when it is
+ * given the wrong number.
+ *
+ * A table rather than a set of special cases, because the arities are no
+ * longer all "one file": `list` takes an optional directory and `meta` takes a
+ * subcommand plus a file. A stray positional stays an error everywhere, for
+ * the reason it always was: it is almost always a quoting mistake, and
+ * ignoring it would run something other than what was typed.
+ */
+const ARITY: Record<string, { min: number; max: number; shape: string }> = {
+  run: { min: 1, max: 1, shape: "<file.tldr>" },
+  shot: { min: 1, max: 1, shape: "<file.tldr>" },
+  new: { min: 1, max: 1, shape: "<file.tldr>" },
+  inspect: { min: 1, max: 1, shape: "<file.tldr>" },
+  export: { min: 1, max: 1, shape: "<file.tldr>" },
+  "from-mermaid": { min: 1, max: 1, shape: "<file.tldr>" },
+  list: { min: 0, max: 1, shape: "[dir]" },
+  meta: { min: 2, max: 2, shape: "set <file.tldr>" },
+};
+
+/** The subcommands `meta` understands. */
+export const META_SUBCOMMANDS = ["set"] as const;
 
 /**
  * Parse a raw argv tail (everything after `node script`).
@@ -237,16 +294,26 @@ export function parseCommand(
   // quoting mistake (`--eval helpers.box(...)` without quotes, say), and
   // ignoring it would run something other than what was typed.
   const args = positionals.slice(1);
-  if (NEEDS_FILE.has(command)) {
-    if (args.length === 0) return { ok: false, error: `"${command}" needs a <file.tldr>.` };
-    if (args.length > 1) {
-      return {
-        ok: false,
-        error: `"${command}" takes one file, got ${String(args.length)}: ${args.join(" ")}`,
-      };
+  const arity = ARITY[command];
+  if (arity === undefined) {
+    if (args.length > 0) {
+      return { ok: false, error: `"${command}" takes no file, got ${args.join(" ")}.` };
     }
-  } else if (args.length > 0) {
-    return { ok: false, error: `"${command}" takes no file, got ${args.join(" ")}.` };
+  } else if (args.length < arity.min) {
+    return { ok: false, error: `"${command}" needs a ${arity.shape}.` };
+  } else if (args.length > arity.max) {
+    return {
+      ok: false,
+      error: arity.max === 1
+        ? `"${command}" takes one file, got ${String(args.length)}: ${args.join(" ")}`
+        : `"${command}" takes ${arity.shape}, got ${args.join(" ")}.`,
+    };
+  }
+  if (command === "meta" && !(META_SUBCOMMANDS as readonly string[]).includes(args[0] ?? "")) {
+    return {
+      ok: false,
+      error: `"meta ${args[0] ?? ""}" is not a subcommand. Try: ${META_SUBCOMMANDS.join(", ")}.`,
+    };
   }
 
   const timeout = numberOption(
@@ -303,6 +370,9 @@ export function parseCommand(
         png: values["png"] as string | undefined,
         source: values["source"] as string | undefined,
         append: values["append"] === true,
+        title: values["title"] as string | undefined,
+        topic: values["topic"] as string | undefined,
+        concepts: splitRepeated(values["concept"] as string[] | undefined),
       },
     },
   };
@@ -319,6 +389,23 @@ function isKnownCommand(command: string): boolean {
     (IMPLEMENTED_COMMANDS as readonly string[]).includes(command) ||
     Object.hasOwn(PLANNED_COMMANDS, command)
   );
+}
+
+/**
+ * A repeatable string flag to a flat list, splitting each occurrence on
+ * commas. `undefined` when the flag never appeared, which is what tells a
+ * patch "leave this field alone" apart from "set it to nothing".
+ */
+function splitRepeated(raw: string[] | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const out: string[] = [];
+  for (const entry of raw) {
+    for (const part of entry.split(",")) {
+      const value = part.trim();
+      if (value.length > 0) out.push(value);
+    }
+  }
+  return out;
 }
 
 /** `--ids a, b ,c` to `["a","b","c"]`. Empty entries are dropped, not kept as "". */
