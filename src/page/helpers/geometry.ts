@@ -136,3 +136,60 @@ export function clampPixelRatio(
   if (scaled <= maxEdge) return requested;
   return Math.max(0.25, maxEdge / longestEdge);
 }
+
+/**
+ * Where along the shared axis two boxes overlap, or `null` when they do not.
+ *
+ * Half-open on purpose: two boxes that merely touch edges have no band a line
+ * can run down, so they fall back to their own midpoints.
+ */
+function overlapCentre(aLow: number, aHigh: number, bLow: number, bHigh: number): number | null {
+  const low = Math.max(aLow, bLow);
+  const high = Math.min(aHigh, bHigh);
+  return high > low ? (low + high) / 2 : null;
+}
+
+/** Turn a page coordinate into that rect's 0..1 space along one axis. */
+function normalize(value: number, start: number, size: number): number {
+  if (!(size > 0)) return 0.5;
+  return clamp01((value - start) / size);
+}
+
+/**
+ * The anchors an arrow should use when the caller named neither end.
+ *
+ * {@link facingSides} says which sides face each other; this says where on
+ * those sides the arrow should land. Anchoring both ends at their side's
+ * midpoint looks right only while the boxes are the same size, and they stop
+ * being the same size as soon as tldraw grows one of them to fit a two-line
+ * label. The arrow then draws a short dog-leg that the label sits on top of,
+ * which reads as a broken arrow.
+ *
+ * So run one page-space line down the band where the two boxes overlap and put
+ * both anchors on it. That is a straight arrow whenever a straight arrow is
+ * possible, and the plain side midpoint when the boxes do not overlap at all
+ * and a bend is unavoidable.
+ */
+export function autoAnchors(
+  from: Rect,
+  to: Rect,
+): { start: NormalizedAnchor; end: NormalizedAnchor } {
+  const sides = facingSides(from, to);
+  const horizontal = sides.start === "left" || sides.start === "right";
+
+  if (horizontal) {
+    const y = overlapCentre(from.y, from.y + from.h, to.y, to.y + to.h);
+    if (y === null) return { start: anchorForSide(sides.start), end: anchorForSide(sides.end) };
+    return {
+      start: { x: sides.start === "right" ? 1 : 0, y: normalize(y, from.y, from.h) },
+      end: { x: sides.end === "right" ? 1 : 0, y: normalize(y, to.y, to.h) },
+    };
+  }
+
+  const x = overlapCentre(from.x, from.x + from.w, to.x, to.x + to.w);
+  if (x === null) return { start: anchorForSide(sides.start), end: anchorForSide(sides.end) };
+  return {
+    start: { x: normalize(x, from.x, from.w), y: sides.start === "bottom" ? 1 : 0 },
+    end: { x: normalize(x, to.x, to.w), y: sides.end === "bottom" ? 1 : 0 },
+  };
+}

@@ -51,7 +51,10 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), "tldrawkc-cli-"));
+  // realpath because macOS hands out /var/... while a child process's cwd
+  // reports the /private/var/... it is a symlink to, and the CLI prints the
+  // path it resolved from cwd.
+  dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "tldrawkc-cli-")));
   file = path.join(dir, "diagram.tldr");
 });
 

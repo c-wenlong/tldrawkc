@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   anchorForSide,
+  autoAnchors,
   clampPixelRatio,
   facingSides,
   isSide,
@@ -121,3 +122,34 @@ describe("clampPixelRatio", () => {
   });
 });
 
+
+describe("autoAnchors", () => {
+  it("runs a straight line between two boxes of the same height", () => {
+    expect(autoAnchors(rect(0, 0), rect(300, 0))).toEqual({
+      start: { x: 1, y: 0.5 },
+      end: { x: 0, y: 0.5 },
+    });
+  });
+
+  it("keeps the line straight when one box grew a second line of label", () => {
+    // 64 tall against 92 tall, tops aligned: the overlap band is the shorter
+    // box, so the line runs down its middle and enters the taller box high.
+    const { start, end } = autoAnchors(rect(0, 0, 170, 64), rect(300, 0, 190, 92));
+    expect(start.y).toBeCloseTo(0.5);
+    expect(0 + 64 * start.y).toBeCloseTo(0 + 92 * end.y);
+  });
+
+  it("does the same on the vertical axis", () => {
+    const { start, end } = autoAnchors(rect(0, 0, 190, 64), rect(40, 200, 110, 64));
+    expect(start.y).toBe(1);
+    expect(end.y).toBe(0);
+    expect(0 + 190 * start.x).toBeCloseTo(40 + 110 * end.x);
+  });
+
+  it("falls back to the side midpoint when the boxes share no band", () => {
+    expect(autoAnchors(rect(0, 0, 100, 64), rect(300, 400, 100, 64))).toEqual({
+      start: { x: 0.5, y: 1 },
+      end: { x: 0.5, y: 0 },
+    });
+  });
+});

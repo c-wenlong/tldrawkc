@@ -19,8 +19,7 @@ import {
 } from "tldraw";
 
 import {
-  facingSides,
-  anchorForSide,
+  autoAnchors,
   resolveAnchor,
   type NormalizedAnchor,
   type Rect,
@@ -69,9 +68,11 @@ export interface ConnectOptions {
   /** Label font, default `draw`. */
   font?: TLDefaultFontStyle;
   /**
-   * Force precise anchoring on or off for both ends. By default an end the
-   * caller named is precise and an auto end is not, which is what lets
-   * tldraw's own router pick the prettiest entry point.
+   * Force precise anchoring on or off for both ends. Both ends are precise by
+   * default, named or not, because an imprecise binding ignores the anchor and
+   * aims at the shape's centre, which throws away the alignment `autoAnchors`
+   * just worked out. Pass `false` to hand the entry point back to tldraw's
+   * own router.
    */
   precise?: boolean;
   /** Arbitrary record metadata. `lintIgnore` lives here. */
@@ -100,11 +101,12 @@ function anchorPoint(rect: Rect, anchor: NormalizedAnchor): { x: number; y: numb
 /**
  * Draw a bound arrow between two shapes and return the arrow's id.
  *
- * Both ends get a real `arrow` binding, so the arrow tracks its shapes. Anchors
- * the caller named are bound with `isPrecise: true` so the line lands exactly
- * there; an end left to `auto` gets the facing side as its anchor but stays
- * imprecise, which lets tldraw's router slide the entry point along that side
- * instead of nailing it to the midpoint.
+ * Both ends get a real `arrow` binding, so the arrow tracks its shapes. Every
+ * anchor is bound with `isPrecise: true`, named or auto, so the line lands
+ * exactly where it was asked to: an imprecise binding ignores the anchor and
+ * aims at the shape's centre, and two boxes whose centres differ (which is any
+ * row where one label wrapped to a second line) then get a dog-leg the label
+ * sits on top of. `autoAnchors` picks the anchors for an unnamed end.
  *
  * @example
  * helpers.connect('agent', 'page', { label: 'exec' })
@@ -128,11 +130,11 @@ export function makeConnection(
 
   const namedStart = resolveAnchor(opts.start);
   const namedEnd = resolveAnchor(opts.end);
-  const auto = facingSides(fromRect, toRect);
-  const startAnchor = namedStart ?? anchorForSide(auto.start);
-  const endAnchor = namedEnd ?? anchorForSide(auto.end);
-  const startPrecise = opts.precise ?? namedStart !== undefined;
-  const endPrecise = opts.precise ?? namedEnd !== undefined;
+  const auto = autoAnchors(fromRect, toRect);
+  const startAnchor = namedStart ?? auto.start;
+  const endAnchor = namedEnd ?? auto.end;
+  const startPrecise = opts.precise ?? true;
+  const endPrecise = opts.precise ?? true;
 
   const heads = HEADS[opts.head ?? "end"];
   const startPoint = anchorPoint(fromRect, startAnchor);

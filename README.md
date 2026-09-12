@@ -10,6 +10,35 @@ something renders it.
 the human view (`serve`) are specified and not written yet; `tldrawkc help`
 lists which phase brings each one.
 
+## What it draws
+
+The example snippet from the helper reference, run end to end and screenshotted
+by the tool itself:
+
+![Four boxes joined by bound arrows: agent cli to headless page labelled exec, headless page to screenshot png labelled toImage, screenshot png back to agent cli labelled read, and a dashed arrow from headless page to browser tab labelled mirror](docs/example-loop.png)
+
+```js
+helpers.box('agent', 'agent cli', { x: 60, y: 60, w: 170, h: 64 })
+helpers.box('page', 'headless page', { after: 'agent', gap: 120, w: 190, h: 64 })
+helpers.box('png', 'screenshot png', { below: 'page', gap: 90, w: 190, h: 64 })
+helpers.box('tab', 'browser tab', { after: 'page', gap: 140, w: 170, h: 64 })
+
+helpers.connect('agent', 'page', { label: 'exec' })
+helpers.connect('page', 'png', { label: 'toImage' })
+helpers.connect('png', 'agent', { label: 'read', start: 'left', end: 'bottom' })
+helpers.connect('page', 'tab', { label: 'mirror', dash: 'dashed' })
+
+return helpers.getLints()
+```
+
+```bash
+tldrawkc run loop.tldr --code loop.js --shot loop.png --create
+```
+
+Every arrow is bound at both ends, so moving a box drags its arrows with it.
+The labels are tldraw's own Shantell Sans, bundled into the page so nothing
+is fetched at render time.
+
 ## The loop
 
 One Node program and one browser page. Every command launches headless
@@ -65,7 +94,7 @@ file behind:
 ```bash
 tldrawkc run loop.tldr --create --shot /tmp/loop.png --code - <<'JS'
 helpers.box('agent', 'agent cli', { x: 60, y: 60, w: 170, h: 64 })
-helpers.box('page', 'headless page', { after: 'agent', gap: 80 })
+helpers.box('page', 'headless page', { after: 'agent', gap: 120 })
 helpers.connect('agent', 'page', { label: 'exec' })
 return helpers.getLints()
 JS

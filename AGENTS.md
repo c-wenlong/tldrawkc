@@ -244,13 +244,24 @@ Collected as they are found, so they are not rediscovered.
   `growY` when its label wraps, so `getShapePageBounds` can be taller than
   `props.h`. Read the bounds, never `props.h`, when placing something against
   a box.
+- **An imprecise arrow binding throws the anchor away.** With
+  `isPrecise: false` tldraw ignores `normalizedAnchor` and aims the terminal at
+  the shape's centre. Two boxes in a row whose centres differ (which is any row
+  where one label wrapped to a second line and grew the box) then get a short
+  dog-leg that the arrow label sits on top of, and it reads as a broken arrow.
+  `connect` therefore binds every end precisely, auto or named, and
+  `geometry.autoAnchors` picks an auto anchor on the band where the two boxes
+  overlap so the line is straight whenever a straight line is possible.
 - **Sixty page units is not enough room for a labelled arrow.** The example
   snippet in `HELPERS.md` uses `gap: 80` and `gap: 60`, and at those distances
   tldraw has to draw the label over almost the whole line: the arrowhead
   shrinks to a stub and `mirror` lands on the box outline. The same snippet at
   120 and 140 renders clean, with arrowheads touching the box edges and every
-  label clear of everything. `DEFAULT_GAP` is 120 for that reason. Treat a
-  crowded short arrow as a gap problem, not a helper bug.
+  label clear of everything. `DEFAULT_GAP` is 120 for that reason. Re-checked
+  after the precise-anchor fix above: the arrows are straight at 80 and 60 now,
+  but `mirror` still covers the whole 60-unit gap and lands on both box
+  outlines, so this is a gap problem and not a helper bug. `HELPERS.md` owes
+  the example wider gaps.
 
 ## Where the design lives
 
