@@ -1,9 +1,9 @@
 /**
- * The shape helpers: `box` and `text`.
+ * The shape helpers: `box`, `text`, `note`, `remove` and `clear`.
  *
- * Both are idempotent on their key, both take placement relative to another
- * shape, and both put their words in a label rather than a floating text
- * shape where they can. Phase 2 adds `note`, `remove` and `clear` beside them.
+ * The first three are idempotent on their key, take placement relative to
+ * another shape, and put their words in a label rather than a floating text
+ * shape where they can.
  */
 
 import {
@@ -18,6 +18,7 @@ import {
   type TLDefaultTextAlignStyle,
   type TLDefaultVerticalAlignStyle,
   type TLGeoShape,
+  type TLNoteShape,
   type TLShapeId,
 } from "tldraw";
 
@@ -244,4 +245,93 @@ export function makeText(
   if (existing) editor.updateShape(partial);
   else editor.createShape(partial);
   return id;
+}
+
+/** Options for {@link makeNote}. A note sizes itself, so there is no `w` or `h`. */
+export type NoteOptions = Omit<BoxOptions, "geo" | "fill" | "dash" | "w" | "h">;
+
+/**
+ * Create or update a sticky note and return its id.
+ *
+ * For asides and "why" callouts beside a diagram, not for the diagram itself.
+ * A note has no width or height of its own: tldraw sizes it from `size` and
+ * grows it downwards to fit the text, so `w` and `h` are not options.
+ */
+export function makeNote(
+  editor: Editor,
+  key: ShapeKey,
+  str: string,
+  opts: NoteOptions = {},
+): TLShapeId {
+  const id = toShapeId(key);
+  const existing = editor.getShape(id);
+  const position = resolvePosition(editor, opts, existing !== undefined, `note "${String(key)}"`);
+
+  const props = {
+    color: opts.color ?? "yellow",
+    labelColor: opts.labelColor ?? "black",
+    font: opts.font ?? "draw",
+    size: opts.size ?? "m",
+    align: opts.align ?? "middle",
+    verticalAlign: opts.verticalAlign ?? "middle",
+    richText: toRichText(str),
+  } satisfies Partial<TLNoteShape["props"]>;
+
+  const partial = {
+    id,
+    type: "note" as const,
+    ...(position ?? {}),
+    ...(opts.parent !== undefined ? { parentId: toShapeId(opts.parent) } : {}),
+    ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
+    props,
+  };
+
+  if (existing) editor.updateShape(partial);
+  else editor.createShape(partial);
+  return id;
+}
+
+/**
+ * Delete shapes by key or id and return how many actually went.
+ *
+ * An id that is not on the canvas is skipped rather than thrown on, because
+ * "make sure this is gone" is the usual reason to call it and a missing shape
+ * already satisfies that.
+ */
+export function removeShapes(editor: Editor, keys: ShapeKey | readonly ShapeKey[]): number {
+  const list: readonly ShapeKey[] = typeof keys === "string" ? [keys] : keys;
+  const ids = list.map((key) => toShapeId(key)).filter((id) => editor.getShape(id) !== undefined);
+  if (ids.length > 0) editor.deleteShapes(ids);
+  return ids.length;
+}
+
+/** Options for {@link clearPage}. */
+export interface ClearOptions {
+  /** Wipe a page this snippet did not create. Say so on purpose. */
+  force?: boolean;
+}
+
+/**
+ * Delete every shape on the current page and return how many went.
+ *
+ * Refused unless this snippet created the document, or `force` is set. Created
+ * means the current page held zero shapes when `exec` started: a snippet that
+ * drew the whole picture may wipe it and start again, a snippet handed someone
+ * else's diagram may not. This mirrors the tldraw offline app's rule about
+ * never clearing a page you did not create.
+ */
+export function clearPage(
+  editor: Editor,
+  opts: ClearOptions,
+  startedEmpty: boolean,
+): number {
+  const shapes = editor.getCurrentPageShapes();
+  if (!startedEmpty && opts.force !== true) {
+    throw new Error(
+      `tldrawkc: clear() refused, this page already held ${shapes.length} shape(s) when the snippet started. Pass { force: true } to wipe a document you did not create.`,
+    );
+  }
+  if (shapes.length === 0) return 0;
+  editor.deleteShapes(shapes.map((shape) => shape.id));
+  return shapes.length;
 }
