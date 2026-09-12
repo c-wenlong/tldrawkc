@@ -150,6 +150,51 @@ Collected as they are found, so they are not rediscovered.
   re-exports `@tldraw/editor` and `@tldraw/tlschema` wholesale. A snippet gets
   the whole module in scope, so reach for the re-export rather than a
   sub-package.
+- **The fonts are confirmed rendered, as of phase 1.** The page was driven
+  headless through a real Chrome, the example snippet from `HELPERS.md` was
+  run, and the PNG was looked at: the labels come out in Shantell Sans with
+  its single-storey `a` and marker stroke ends, not a system fallback. The run
+  logged zero failed requests and zero responses at 400 or worse, and
+  `document.fonts` reported `tldraw_draw`, `tldraw_sans`, `tldraw_serif` and
+  `tldraw_mono` all loaded. This is the rendered check phase 1 owed.
+- **`parseTldrawJsonFile` hands back a `TLStore`, not a file object.** The
+  result is a `Result<TLStore, TldrawFileParseError>`, so the success path is
+  `parsed.value.getStoreSnapshot("document")`. Pass the scope explicitly:
+  the argument defaults to `document` today, and `"all"` would drag session
+  records into a snapshot meant only for `loadSnapshot`.
+- **`toImage`'s `padding` defaults to `'auto'`, not to a number.** `'auto'`
+  trims to visual content bounds and captures overflow like thick strokes and
+  arrowheads; a number is fixed padding with no trimming, and anything beyond
+  it is clipped. The bridge passes a number because the CLI exposes
+  `--padding`. `background` is a boolean and defaults to true.
+- **An arrow binding's `props.snap` is required by the validator** (an
+  `ElbowArrowSnap`: `center`, `edge-point`, `edge` or `none`), but
+  `ArrowBindingUtil.getDefaultProps()` supplies `none`, so a partial `props`
+  on `editor.createBindings` is fine. The same goes for `normalizedAnchor`,
+  `isPrecise` and `isExact`.
+- **The arrow schema's default `kind` is `arc`.** `HELPERS.md` wants `elbow`
+  as the helper default, so `connect` sets it on every arrow rather than
+  relying on the shape default. Elbow routing reads `props.elbowMidPoint`
+  (0..1); `props.bend` is arc only, and the two are separate fields.
+- **A snippet's stack line numbers are two higher than the source.** The
+  `AsyncFunction` constructor prepends a header, so line 4 of a snippet
+  reports as `<anonymous>:6`. The offset was measured, not guessed, and it is
+  constant. Subtract 2 before showing a caller which line threw.
+- **`createShapeId(id)` is literally `` `shape:${id}` ``**, with no check for a
+  prefix that is already there. Feeding it a real id gives `shape:shape:x`,
+  which is why `helpers/keys.ts` strips the prefix first and every helper takes
+  either form.
+- **A box's `h` is a minimum, not the height.** tldraw grows a geo shape with
+  `growY` when its label wraps, so `getShapePageBounds` can be taller than
+  `props.h`. Read the bounds, never `props.h`, when placing something against
+  a box.
+- **Sixty page units is not enough room for a labelled arrow.** The example
+  snippet in `HELPERS.md` uses `gap: 80` and `gap: 60`, and at those distances
+  tldraw has to draw the label over almost the whole line: the arrowhead
+  shrinks to a stub and `mirror` lands on the box outline. The same snippet at
+  120 and 140 renders clean, with arrowheads touching the box edges and every
+  label clear of everything. `DEFAULT_GAP` is 120 for that reason. Treat a
+  crowded short arrow as a gap problem, not a helper bug.
 
 ## Where the design lives
 
