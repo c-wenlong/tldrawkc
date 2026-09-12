@@ -33,6 +33,7 @@ is for; the design docs it is built from live in the self-learn repo (see
 | `test/unit/` | node only, no browser, runs on every push |
 | `test/e2e/` | real Chromium. CI installs one first |
 | `dist/` | build output, gitignored: `dist/cli/`, `dist/lib/`, `dist/page/`, `dist/api.json` |
+| `.claude/skills/tldrawkc-diagram/` | the agent-facing skill: the draw, look, fix, export loop and the self-learn conventions. Symlinked into self-learn's `.claude/skills/`, the way `manimkc-video` is |
 
 ## Build and test
 

@@ -192,6 +192,13 @@ signature is the parameters as written.
 3 is deliberate. The work is real, so it is written, and the non-zero code is
 what stops an agent calling a diagram finished without looking at it.
 
+## For agents
+
+`.claude/skills/tldrawkc-diagram/SKILL.md` is the skill a coding agent loads to
+use this tool: the draw, look, fix, export loop, the snippet conventions, and
+where the committed files go in self-learn, which symlinks it into its own
+`.claude/skills/`.
+
 ## Design
 
 The brief this is built from lives in the self-learn repo under
