@@ -273,6 +273,82 @@ Collected as they are found, so they are not rediscovered.
   outlines, so this is a gap problem and not a helper bug. `HELPERS.md` owes
   the example wider gaps.
 
+- **tldraw 5 has no rounded rectangle.** `GeoShapeGeoStyle` is a fixed enum
+  (`rectangle`, `ellipse`, `oval`, `diamond`, `cloud`, `hexagon`, `star`,
+  `heart`, ...) and `TLGeoShapeProps` carries nothing to round a corner with,
+  so mermaid's `id(text)` has no exact home. The importer maps it to `oval`,
+  the capsule, which is the nearest silhouette and the only one that reads as
+  "not a plain box". The cost is that `id(text)` and `id([text])` come out
+  identical.
+- **`getSvgString` puts labels in a `<foreignObject>`, not in `<text>`.** The
+  export of an eight-box canvas had zero `<text>` and zero `<tspan>` elements
+  and ten `<foreignObject>` elements holding ordinary HTML `<div>` and `<p>`.
+  The label text is still there as a plain string, so grepping an SVG for a
+  label works, but anything that walks `<text>` nodes will find nothing, and a
+  rasteriser with no foreignObject support (librsvg, ImageMagick, older
+  Inkscape) will drop every label. Browsers render it correctly. Fonts are
+  inlined the way the design assumed: the SVG opens with `@font-face` blocks
+  whose `src` is a `data:font/woff2;base64,` URL.
+- **Nothing clips at a large coordinate; the export frame is what breaks.**
+  Measured in a real Chrome: `toImage` and `getSvgString` both framed a box at
+  x = 200000 correctly. What goes wrong is that every export is framed to the
+  union of the shapes, so one stray shape at x = 10000 makes a frame 10000
+  units wide, and against `MAX_SHOT_EDGE` (4096 px) that renders at about 0.4
+  px per unit: a normal 64-unit box comes out 26 px tall and unreadable. Past
+  roughly 100000 units the raster is also wrong, because tldraw quietly
+  downscales to stay inside the browser's canvas limits (a frame 128 units
+  tall came back as 126.96 at x = 100000 and 125.28 at x = 200000). That
+  measurement is where `OFF_PAGE_LIMIT` of 10000 comes from.
+- **The label rectangle in a shape's geometry is clamped to the shape.**
+  `GeoShapeUtil.getGeometry` returns a `Group2d` whose second child is a
+  `Rectangle2d` with `isLabel: true`, and it is `Math.min`ed against the
+  shape's own width and height. It is the right thing to read for "where does
+  this label sit" (`overlapping-text`), and useless for "is this label too
+  big", because it can never report a size the shape does not have.
+- **tldraw breaks a long word mid-word rather than letting it overflow.** The
+  label CSS is `overflow-wrap: break-word`, so `antidisestablishmentarianism`
+  in a 90-unit box renders as six stacked fragments rather than spilling out.
+  A naive "is the text wider than the shape" check therefore never fires. The
+  measurement that does is
+  `editor.textMeasure.measureText(text, { ..., maxWidth: innerWidth, measureScrollWidth: true, disableOverflowWrapBreaking: true })`,
+  whose `scrollWidth` reports the widest unbreakable run. That is what
+  `unreadable-label` compares against the shape width.
+- **The label metrics are `@internal`.** `LABEL_FONT_SIZES`,
+  `ARROW_LABEL_FONT_SIZES`, `LABEL_PADDING`, `ARROW_LABEL_PADDING` and
+  `TEXT_PROPS` live in
+  `node_modules/tldraw/src/lib/shapes/shared/default-shape-constants.ts` and
+  are not on the public entry point; `getFontFamily(theme, font)` is. Anything
+  that measures a label the way tldraw does has to copy the numbers, so
+  `helpers/read.ts` keeps them together with a pointer at the source file. The
+  live values come off `editor.getCurrentTheme()`, which carries `fontSize`,
+  `lineHeight` and `strokeWidth`.
+- **An arrow is the only shape that can carry a binding.** There is no line
+  binding, so `helpers.attribute`'s "bound line with no arrowhead" is an arrow
+  shape with `arrowheadStart` and `arrowheadEnd` both `none`. A real `line`
+  shape would be a loose mark that stays put when its box moves.
+- **An elbow arrow between two shapes in the same column routes straight
+  through everything between them.** The router only knows its two endpoints,
+  so a mermaid back edge (`look --> cli` in a top-down flowchart) drew a
+  vertical line through six boxes. `mermaid-apply.ts` detects a back edge from
+  the rank map and switches it to an `arc` anchored on the outside face of
+  both shapes, with a bend that puts the apex clear of the widest shape.
+- **An arc's `bend` is the distance from the chord midpoint to the apex, and a
+  positive one pushes it a quarter turn anticlockwise from the direction of
+  travel.** Measured, not assumed: an arrow running straight up between two
+  right-edge anchors with `bend: 300` came back with page bounds 300 units
+  wider on its right. So compute the sign as a dot product against the side
+  you want rather than guessing.
+- **A note shape has no `w` or `h`.** `TLNoteShapeProps` carries `size`,
+  `growY` and `fontSizeAdjustment`; tldraw sizes the note from its `size`
+  style, grows it down to fit, and shrinks the font rather than overflowing.
+  That is also why `unreadable-label` exempts notes.
+- **`editor.getShapePageBounds` on a geo shape already includes `growY`.** A
+  box whose label wrapped to three lines reported `h` of 122 against a
+  declared 64, so every layout helper reads the page bounds and never
+  `props.h`. `respaceRanks` in the mermaid importer exists entirely because of
+  this: the parser sizes boxes by counting characters, and the real heights
+  only exist after the shapes do.
+
 ## Where the design lives
 
 The brief this repo is built from is in the self-learn repo at
