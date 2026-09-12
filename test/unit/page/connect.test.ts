@@ -27,6 +27,13 @@ describe("connectionKey", () => {
     expect(connectionKey("shape:agent", "shape:page")).toBe("arrow:agent->page");
   });
 
+  it("refuses a key that contains the separator, rather than colliding", () => {
+    // `a->b` to `c` and `a` to `b->c` would both derive `arrow:a->b->c`, and
+    // the second call would rebind the first call's arrow.
+    expect(() => connectionKey("a->b", "c")).toThrow(/separator/);
+    expect(() => connectionKey("a", "b->c")).toThrow(/separator/);
+  });
+
   it("cannot be confused by keys that contain dashes", () => {
     // `a-b` to `c` and `a` to `b-c` would collide under a dash separator.
     expect(connectionKey("a-b", "c")).not.toBe(connectionKey("a", "b-c"));

@@ -13,7 +13,7 @@
  * wrong, and it is not this file.
  */
 
-import { readText, writePng, writeText } from "./files.js";
+import { isAlreadyExists, readText, writePng, writeText } from "./files.js";
 import { resolveOutputPath, resolveTldrPath, tempShotPath } from "./paths.js";
 import { EnvironmentError, ExportError, SnippetError, UsageError } from "./errors.js";
 import {
@@ -267,6 +267,10 @@ export interface NewDocumentResult {
 export async function newDocument(options: NewDocumentOptions): Promise<NewDocumentResult> {
   const started = Date.now();
   const file = resolveTldrPath(options.file, options.cwd);
+  // Checked here so the caller hears "that exists" in a millisecond rather
+  // than after a browser launch. The claim is made by the exclusive write
+  // below, which is what makes the refusal true even if something else creates
+  // the file while the page is starting up.
   if ((await readText(file)) !== null) {
     throw new UsageError(`${file} already exists. Delete it or pick another name.`);
   }
@@ -288,7 +292,16 @@ export async function newDocument(options: NewDocumentOptions): Promise<NewDocum
       await requireBridge(canvas, ["load", "save"]);
       await canvas.load(from);
       const json = await saveDocument(canvas);
-      await writeText(file, json);
+      try {
+        await writeText(file, json, { exclusive: true });
+      } catch (error) {
+        if (isAlreadyExists(error)) {
+          throw new UsageError(
+            `${file} was created while this command was running. Nothing was overwritten.`,
+          );
+        }
+        throw error;
+      }
       return { file, ms: Date.now() - started };
     },
   );

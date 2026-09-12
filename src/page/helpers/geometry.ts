@@ -123,8 +123,10 @@ export function unionRects(rects: readonly Rect[]): Rect | null {
  * `MAX_SHOT_EDGE` is a ceiling on the longest edge of the PNG, because a
  * pixelRatio of 2 on a wide diagram produces an image an agent cannot read in
  * one look and a browser struggles to rasterise. Reduce the ratio rather than
- * cropping, and never go below a quarter, which keeps a pathological canvas
- * producing something rather than nothing.
+ * cropping, and with no floor under the reduction: a floor would turn the
+ * ceiling into a suggestion on a canvas wide enough to need it most, and an
+ * image of a 20,000-unit diagram that a browser refuses to rasterise is worth
+ * less than a small one of the same thing.
  */
 export function clampPixelRatio(
   requested: number,
@@ -134,7 +136,7 @@ export function clampPixelRatio(
   if (!Number.isFinite(longestEdge) || longestEdge <= 0) return requested;
   const scaled = longestEdge * requested;
   if (scaled <= maxEdge) return requested;
-  return Math.max(0.25, maxEdge / longestEdge);
+  return maxEdge / longestEdge;
 }
 
 /**

@@ -184,6 +184,12 @@ function unavailable(reason: string): PageChecks {
 async function checkPageLoad(chromium: string | undefined): Promise<PageChecks> {
   try {
     return await withCanvas({ chromium }, async (canvas) => {
+      // Before anything is read off the network log: `ping` answering means
+      // the editor mounted, and tldraw's font fetches are still in flight at
+      // that point. Snapshotting here would let a 404 land after the check had
+      // already passed, which is the exact silent failure this check exists
+      // for.
+      const loadedFamilies = await canvas.fontsReady();
       const failed = canvas.failedRequests();
       const offHost = canvas.offHostRequests();
       const fontFailures = failed.filter((entry) => isFontUrl(entry.url));
@@ -207,6 +213,8 @@ async function checkPageLoad(chromium: string | undefined): Promise<PageChecks> 
           }
         : { name: "page load", status: "fail", detail: problems.join("; ") };
 
+      const tldrawFamilies = loadedFamilies.filter((family) => family.startsWith("tldraw_"));
+
       const fonts: DoctorCheck = fontFailures.length > 0
         ? {
             name: "fonts",
@@ -219,11 +227,17 @@ async function checkPageLoad(chromium: string | undefined): Promise<PageChecks> 
               status: "fail",
               detail: `no font files under ${PAGE_DIST_DIR}. Run \`npm run build\`.`,
             }
-          : {
-              name: "fonts",
-              status: "pass",
-              detail: `${String(bundled)} font files bundled, none failed to load`,
-            };
+          : tldrawFamilies.length === 0
+            ? {
+                name: "fonts",
+                status: "fail",
+                detail: `${String(bundled)} font files are bundled but the page loaded none of them, so labels would render in a system font`,
+              }
+            : {
+                name: "fonts",
+                status: "pass",
+                detail: `${String(bundled)} font files bundled, ${describe(tldrawFamilies)} loaded, none failed`,
+              };
 
       return { load, fonts };
     });

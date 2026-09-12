@@ -125,6 +125,26 @@ function resolvePosition(
 }
 
 /**
+ * Turn a page-space point into the coordinate space of the shape it parents to.
+ *
+ * `x` and `y` in the helpers' vocabulary are page coordinates (HELPERS.md), but
+ * tldraw reads a shape's `x` and `y` in its parent's space. They are the same
+ * numbers while the parent is the page, and they stop being the same the moment
+ * a frame or group is anywhere but the origin, which would land the child at an
+ * offset nobody asked for.
+ */
+function toParentSpace(
+  editor: Editor,
+  parent: ShapeKey,
+  point: { x: number; y: number },
+): { x: number; y: number } {
+  const transform = editor.getShapePageTransform(toShapeId(parent));
+  if (!transform) return point;
+  const local = transform.clone().invert().applyToPoint(point);
+  return { x: local.x, y: local.y };
+}
+
+/**
  * Create or update a labelled geo shape and return its id.
  *
  * The id comes from the key, so re-running a snippet updates the same box
@@ -160,10 +180,14 @@ export function makeBox(
     richText: toRichText(label),
   } satisfies Partial<TLGeoShape["props"]>;
 
+  const placed = position !== undefined && opts.parent !== undefined
+    ? toParentSpace(editor, opts.parent, position)
+    : position;
+
   const partial = {
     id,
     type: "geo" as const,
-    ...(position ?? {}),
+    ...(placed ?? {}),
     ...(opts.parent !== undefined ? { parentId: toShapeId(opts.parent) } : {}),
     ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
     props,
@@ -204,10 +228,14 @@ export function makeText(
     richText: toRichText(str),
   };
 
+  const placed = position !== undefined && opts.parent !== undefined
+    ? toParentSpace(editor, opts.parent, position)
+    : position;
+
   const partial = {
     id,
     type: "text" as const,
-    ...(position ?? {}),
+    ...(placed ?? {}),
     ...(opts.parent !== undefined ? { parentId: toShapeId(opts.parent) } : {}),
     ...(opts.meta !== undefined ? { meta: opts.meta } : {}),
     props,

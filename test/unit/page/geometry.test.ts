@@ -113,8 +113,11 @@ describe("clampPixelRatio", () => {
     expect(clampPixelRatio(2, 4000, 4096)).toBeCloseTo(1.024, 3);
   });
 
-  it("never drops below a quarter", () => {
-    expect(clampPixelRatio(2, 1_000_000, 4096)).toBe(0.25);
+  it("holds the ceiling however wide the canvas is", () => {
+    // No floor under the reduction: a floor would put the longest edge back
+    // over the ceiling on exactly the canvases that need it.
+    expect(clampPixelRatio(2, 1_000_000, 4096) * 1_000_000).toBeCloseTo(4096, 6);
+    expect(clampPixelRatio(2, 20_000, 4096) * 20_000).toBeCloseTo(4096, 6);
   });
 
   it("ignores a degenerate edge", () => {

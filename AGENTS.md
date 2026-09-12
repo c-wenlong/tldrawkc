@@ -244,6 +244,16 @@ Collected as they are found, so they are not rediscovered.
   `growY` when its label wraps, so `getShapePageBounds` can be taller than
   `props.h`. Read the bounds, never `props.h`, when placing something against
   a box.
+- **A child shape's `x` and `y` are in its parent's space, not the page's.**
+  The helpers' vocabulary is page coordinates throughout, so `box` with a
+  `parent` converts the resolved point through
+  `editor.getShapePageTransform(parent).clone().invert()`. Without that, a box
+  placed at page (440, 340) inside a frame at (400, 300) lands at (840, 640).
+- **`document.fonts.ready` resolves later than the bridge answers `ping`.**
+  tldraw kicks its woff2 fetches off during mount and carries on, so a
+  failed-request snapshot taken when the bridge answers can miss the 404 the
+  fonts check exists for. `doctor` awaits `canvas.fontsReady()` first and then
+  names the `tldraw_*` families that actually came back loaded.
 - **An imprecise arrow binding throws the anchor away.** With
   `isPrecise: false` tldraw ignores `normalizedAnchor` and aims the terminal at
   the shape's centre. Two boxes in a row whose centres differ (which is any row

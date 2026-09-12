@@ -12,6 +12,19 @@ import path from "node:path";
 
 import { tempSiblingPath } from "./paths.js";
 
+/** Options for {@link writeAtomic}. */
+export interface WriteOptions {
+  /**
+   * Refuse to replace an existing `target`, raising `EEXIST`.
+   *
+   * `rename` replaces whatever is there, so a command that checked for the
+   * file before doing a second of work has only checked, not claimed. `link`
+   * is the exclusive equivalent: it fails when the target exists, and it is
+   * still one atomic publication of a fully written file.
+   */
+  exclusive?: boolean | undefined;
+}
+
 /**
  * Write bytes to `target` atomically.
  *
@@ -22,12 +35,14 @@ import { tempSiblingPath } from "./paths.js";
 export async function writeAtomic(
   target: string,
   data: string | Uint8Array,
+  options: WriteOptions = {},
 ): Promise<string> {
   await fs.mkdir(path.dirname(target), { recursive: true });
   const temp = tempSiblingPath(target);
   try {
     await fs.writeFile(temp, data);
-    await fs.rename(temp, target);
+    if (options.exclusive) await publishExclusive(temp, target);
+    else await fs.rename(temp, target);
   } catch (error) {
     await fs.rm(temp, { force: true });
     throw error;
@@ -35,9 +50,46 @@ export async function writeAtomic(
   return target;
 }
 
+/**
+ * Publish `temp` as `target` only if nothing is there, then drop `temp`.
+ *
+ * Hard links are the exclusive publication primitive POSIX offers. A
+ * filesystem that has none (an exFAT stick, say) answers `EPERM` or
+ * `ENOTSUP`, and there the best available answer is the ordinary rename after
+ * one more look: the race window comes back, but refusing to create a file on
+ * a USB drive would be a worse trade.
+ */
+async function publishExclusive(temp: string, target: string): Promise<void> {
+  try {
+    await fs.link(temp, target);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP" && code !== "ENOSYS") {
+      throw error;
+    }
+    if (await modifiedAt(target) !== null) {
+      const exists: NodeJS.ErrnoException = new Error(`EEXIST: ${target} already exists`);
+      exists.code = "EEXIST";
+      throw exists;
+    }
+    await fs.rename(temp, target);
+    return;
+  }
+  await fs.rm(temp, { force: true });
+}
+
 /** Write UTF-8 text atomically. `.tldr` and `.svg` both come through here. */
-export async function writeText(target: string, text: string): Promise<string> {
-  return writeAtomic(target, text);
+export async function writeText(
+  target: string,
+  text: string,
+  options: WriteOptions = {},
+): Promise<string> {
+  return writeAtomic(target, text, options);
+}
+
+/** Did this error come from an exclusive write losing the race? */
+export function isAlreadyExists(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "EEXIST";
 }
 
 /**

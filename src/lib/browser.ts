@@ -367,6 +367,18 @@ export interface CanvasHandle {
   /** Whether the loaded page implements a bridge function. */
   has(method: BridgeMethod): Promise<boolean>;
 
+  /**
+   * Wait for the page's font loading to settle, then name the families that
+   * came back loaded.
+   *
+   * `ping` answering means the editor mounted, which is earlier than the fonts
+   * finishing: tldraw kicks its woff2 fetches off and carries on. Reading the
+   * failed-request list at mount time can therefore miss the 404 that the
+   * fonts check exists to catch, so anything asking about fonts awaits this
+   * first.
+   */
+  fontsReady(): Promise<string[]>;
+
   /** Every request that failed or answered 400 or worse, in order. */
   failedRequests(): FailedRequest[];
   /**
@@ -465,6 +477,7 @@ export async function openCanvasPage(options: OpenCanvasOptions): Promise<Canvas
         const bridge = window.__tldrawkc as unknown as Record<string, unknown>;
         return typeof bridge[name] === "function";
       }, method),
+    fontsReady: () => page.evaluate<string[]>(FONTS_READY_EXPRESSION),
     failedRequests: () => [...failed],
     offHostRequests: () => [...offHost],
     close: async () => {
@@ -487,6 +500,23 @@ const BRIDGE_READY_EXPRESSION = `(() => {
   if (!bridge || typeof bridge.ping !== "function") return false;
   const answer = bridge.ping();
   return Boolean(answer && answer.ok);
+})()`;
+
+/**
+ * The expression `fontsReady` evaluates, as a string.
+ *
+ * A string for the same reason as {@link BRIDGE_READY_EXPRESSION}: `src/lib`
+ * is node code and its tsconfig has no DOM library, so `document` is not a
+ * name it can see. Sending the source keeps the DOM out of the node build
+ * rather than widening the compiler options for one call.
+ */
+const FONTS_READY_EXPRESSION = `(async () => {
+  await document.fonts.ready;
+  const families = new Set();
+  document.fonts.forEach((face) => {
+    if (face.status === "loaded") families.add(face.family.replace(/^["']|["']$/g, ""));
+  });
+  return [...families].sort();
 })()`;
 
 /** Everything a failed page load can usefully say, in one message. */
