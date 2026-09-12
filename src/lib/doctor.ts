@@ -97,11 +97,14 @@ async function checkChromium(flag: string | undefined): Promise<DoctorCheck> {
     };
   } catch (error) {
     if (error instanceof ChromiumNotFoundError) {
+      // The message already names the one candidate when the caller named it,
+      // so the full list is only worth printing when the resolver searched.
+      const listWorthPrinting = error.tried.length > 1;
       const tried = error.tried.map((entry) => `${entry.path} (${entry.reason})`).join(", ");
       return {
         name: "chromium",
         status: "fail",
-        detail: `${error.message} Tried: ${tried || "nothing"}`,
+        detail: listWorthPrinting ? `${error.message} Tried: ${tried}` : error.message,
       };
     }
     throw error;

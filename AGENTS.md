@@ -77,6 +77,11 @@ design docs and implemented in `src/lib/browser.ts`:
 Each candidate has to both exist and answer `--version`, because a stale
 Playwright registry entry points at a directory that was deleted.
 
+A browser the caller **named** is not a suggestion: when `--chromium` or
+`TLDRAWKC_CHROMIUM` points at something unusable, that is an error rather than
+a reason to fall through to a different browser. The whole point of naming one
+is to control which engine drew the picture. Only steps 3 and 4 fall through.
+
 `playwright` is a devDependency pinned to the **exact same version** as
 `playwright-core`. It has no install script of its own (checked against
 1.63.0: the published `package.json` has no `scripts` block at all), so it

@@ -72,4 +72,13 @@ describe("tempSiblingPath", () => {
     const target = "/work/a.tldr";
     expect(tempSiblingPath(target)).not.toBe(target);
   });
+
+  it("gives two calls in the same millisecond different names", () => {
+    // Two writes to one target from one process must not pick the same temp
+    // file: they would overwrite each other and race to rename.
+    const names = new Set(
+      Array.from({ length: 100 }, () => tempSiblingPath("/work/a.tldr")),
+    );
+    expect(names.size).toBe(100);
+  });
 });

@@ -38,13 +38,28 @@ export interface ChromiumResolutionFailure {
 export class ChromiumNotFoundError extends Error implements ChromiumResolutionFailure {
   readonly tried: ChromiumResolutionFailure["tried"];
   constructor(tried: ChromiumResolutionFailure["tried"]) {
-    super(
-      "no usable Chromium found. Pass --chromium <path>, set TLDRAWKC_CHROMIUM, " +
-        "run `npx playwright install chromium`, or install Google Chrome.",
-    );
+    super(messageFor(tried));
     this.name = "ChromiumNotFoundError";
     this.tried = tried;
   }
+}
+
+/**
+ * Say what actually went wrong.
+ *
+ * Telling someone who passed `--chromium` to try passing `--chromium` is the
+ * kind of message that costs a minute every time it is read.
+ */
+function messageFor(tried: ChromiumResolutionFailure["tried"]): string {
+  const named = tried.find((entry) => entry.source === "flag" || entry.source === "env");
+  if (named) {
+    const how = named.source === "flag" ? "--chromium" : "TLDRAWKC_CHROMIUM";
+    return `${how} points at "${named.path}", which is unusable (${named.reason}).`;
+  }
+  return (
+    "no usable Chromium found. Pass --chromium <path>, set TLDRAWKC_CHROMIUM, " +
+    "run `npx playwright install chromium`, or install Google Chrome."
+  );
 }
 
 /**
@@ -95,6 +110,12 @@ export interface ResolveChromiumOptions {
  * candidate must both exist and answer `--version`, because a stale
  * Playwright registry entry points at a path that was deleted and an
  * executable that cannot start is not worth reporting as found.
+ *
+ * A browser the caller **named** is not a suggestion. If `--chromium` or
+ * `TLDRAWKC_CHROMIUM` points at something that does not work, that is an
+ * error, not a reason to quietly launch a different browser: the whole point
+ * of naming one is to control which engine drew the picture. Only the two
+ * discovery steps fall through.
  */
 export async function resolveChromium(
   options: ResolveChromiumOptions = {},
@@ -102,27 +123,36 @@ export async function resolveChromium(
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
 
-  const candidates: Array<{ path: string; source: ChromiumSource }> = [];
-  if (options.flag) candidates.push({ path: options.flag, source: "flag" });
+  const named: Array<{ path: string; source: ChromiumSource }> = [];
+  if (options.flag) named.push({ path: options.flag, source: "flag" });
   const fromEnv = env["TLDRAWKC_CHROMIUM"];
-  if (fromEnv) candidates.push({ path: fromEnv, source: "env" });
-  const fromPlaywright = playwrightExecutablePath();
-  if (fromPlaywright) candidates.push({ path: fromPlaywright, source: "playwright" });
-  for (const path of installedBrowserPaths(platform)) {
-    candidates.push({ path, source: "installed" });
-  }
+  if (fromEnv) named.push({ path: fromEnv, source: "env" });
 
   const tried: ChromiumResolutionFailure["tried"] = [];
-  for (const candidate of candidates) {
-    const version = await probe(candidate.path);
-    if (version.ok) {
-      return {
-        executablePath: candidate.path,
-        source: candidate.source,
-        version: version.version,
-      };
+  for (const candidate of named) {
+    const probed = await probe(candidate.path);
+    if (probed.ok) {
+      return { executablePath: candidate.path, source: candidate.source, version: probed.version };
     }
-    tried.push({ ...candidate, reason: version.reason });
+    tried.push({ ...candidate, reason: probed.reason });
+    // Named and unusable: stop here rather than falling through to a browser
+    // the caller did not ask for.
+    throw new ChromiumNotFoundError(tried);
+  }
+
+  const discovered: Array<{ path: string; source: ChromiumSource }> = [];
+  const fromPlaywright = playwrightExecutablePath();
+  if (fromPlaywright) discovered.push({ path: fromPlaywright, source: "playwright" });
+  for (const path of installedBrowserPaths(platform)) {
+    discovered.push({ path, source: "installed" });
+  }
+
+  for (const candidate of discovered) {
+    const probed = await probe(candidate.path);
+    if (probed.ok) {
+      return { executablePath: candidate.path, source: candidate.source, version: probed.version };
+    }
+    tried.push({ ...candidate, reason: probed.reason });
   }
   throw new ChromiumNotFoundError(tried);
 }

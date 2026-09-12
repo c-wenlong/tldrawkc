@@ -58,9 +58,22 @@ function out(line: string): void {
   process.stdout.write(`${line}\n`);
 }
 
-function fail(message: string, code: number = EXIT.usage): never {
-  process.stderr.write(`tldrawkc: ${message}\n`);
-  process.exit(code);
+/**
+ * A message for stderr and an exit code, thrown rather than exited.
+ *
+ * `process.exit` truncates: when stdout or stderr is a pipe, Node's writes are
+ * asynchronous, and exiting mid-flush drops whatever is still buffered. So
+ * nothing here calls it. Every path sets `process.exitCode` and returns, and
+ * the process ends when the event loop drains, by which point the output has
+ * been written.
+ */
+class CliError extends Error {
+  readonly code: number;
+  constructor(message: string, code: number = EXIT.usage) {
+    super(message);
+    this.name = "CliError";
+    this.code = code;
+  }
 }
 
 function printJson(value: unknown): void {
@@ -95,26 +108,32 @@ function runHelp(globals: GlobalOptions): number {
   return EXIT.ok;
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
   const result = parseCommand(process.argv.slice(2));
-  if (!result.ok) fail(`${result.error}\nRun "tldrawkc help" for usage.`);
+  if (!result.ok) throw new CliError(`${result.error}\nRun "tldrawkc help" for usage.`);
 
   const { command, globals } = result.parsed;
   switch (command) {
     case "doctor":
-      process.exit(await runDoctor(globals));
-      break;
+      return await runDoctor(globals);
     case "help":
-      process.exit(runHelp(globals));
-      break;
+      return runHelp(globals);
     default:
       // parseCommand has already rejected everything else; this arm exists so
       // adding a command to IMPLEMENTED_COMMANDS without wiring it here is
       // loud rather than silent.
-      fail(`command "${command}" is known but not wired up.`);
+      throw new CliError(`command "${command}" is known but not wired up.`);
   }
 }
 
-main().catch((error: unknown) => {
-  fail(error instanceof Error ? (error.stack ?? error.message) : String(error));
-});
+try {
+  process.exitCode = await main();
+} catch (error: unknown) {
+  const message = error instanceof CliError
+    ? error.message
+    : error instanceof Error
+      ? (error.stack ?? error.message)
+      : String(error);
+  process.stderr.write(`tldrawkc: ${message}\n`);
+  process.exitCode = error instanceof CliError ? error.code : EXIT.usage;
+}

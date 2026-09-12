@@ -8,6 +8,7 @@
 
 import path from "node:path";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -73,10 +74,17 @@ export function tempShotPath(
  *
  * Same directory as the target, because `rename` is only atomic within one
  * filesystem. See `files.ts`.
+ *
+ * The name carries a random component, not just the pid and the clock. Two
+ * writes to the same target from one process inside the same millisecond
+ * would otherwise pick the same temp file, overwrite each other's bytes and
+ * race to rename it: one call fails with ENOENT and the other publishes the
+ * wrong contents. `serve` writing while a `run` finishes is exactly that
+ * shape, so the collision is not hypothetical.
  */
 export function tempSiblingPath(target: string, suffix: string = ""): string {
   const dir = path.dirname(target);
   const base = path.basename(target);
-  const unique = `${process.pid.toString(36)}${Date.now().toString(36)}${suffix}`;
+  const unique = `${process.pid.toString(36)}-${randomUUID()}${suffix}`;
   return path.join(dir, `.${base}.${unique}.tmp`);
 }
