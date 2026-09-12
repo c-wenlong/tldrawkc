@@ -50,9 +50,25 @@ describe("dispatch", () => {
   });
 
   it("names the phase for a command that is specified but not built", () => {
-    const result = parse(["inspect", "a.tldr"]);
+    const result = parse(["serve", "a.tldr"]);
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.error).toContain("phase 2");
+    expect(!result.ok && result.error).toContain("phase 4");
+  });
+
+  it("dispatches every phase 2 verb", () => {
+    expect(parse(["inspect", "a.tldr"]).ok).toBe(true);
+    expect(parse(["export", "a.tldr", "--svg", "out.svg"]).ok).toBe(true);
+    expect(parse(["from-mermaid", "a.tldr", "--source", "d.mmd"]).ok).toBe(true);
+    expect(parse(["api"]).ok).toBe(true);
+  });
+
+  it("refuses a file for api, and demands one for the other three", () => {
+    expect(!parse(["api", "a.tldr"]).ok).toBe(true);
+    for (const command of ["inspect", "export", "from-mermaid"]) {
+      const result = parse([command]);
+      expect(result.ok, command).toBe(false);
+      expect(!result.ok && result.error).toContain("<file.tldr>");
+    }
   });
 
   it("rejects an unknown option", () => {
@@ -164,6 +180,9 @@ describe("command options", () => {
       output: undefined,
       ids: undefined,
       from: undefined,
+      png: undefined,
+      source: undefined,
+      append: false,
     });
   });
 
@@ -209,6 +228,55 @@ describe("command options", () => {
     expect(result.ok && result.parsed.options.from).toBe("b.tldr");
   });
 
+  it("reads --svg, --png and --ids for export", () => {
+    const result = parse([
+      "export",
+      "a.tldr",
+      "--svg",
+      "out.svg",
+      "--png",
+      "out.png",
+      "--ids",
+      "shape:a,shape:b",
+    ]);
+    expect(result.ok && result.parsed.options.svg).toBe("out.svg");
+    expect(result.ok && result.parsed.options.png).toBe("out.png");
+    expect(result.ok && result.parsed.options.ids).toEqual(["shape:a", "shape:b"]);
+  });
+
+  it("reads --source, --append and --shot for from-mermaid", () => {
+    const result = parse([
+      "from-mermaid",
+      "a.tldr",
+      "--source",
+      "map.mmd",
+      "--append",
+      "--shot",
+      "out.png",
+    ]);
+    expect(result.ok && result.parsed.options.source).toBe("map.mmd");
+    expect(result.ok && result.parsed.options.append).toBe(true);
+    expect(result.ok && result.parsed.options.shot).toBe("out.png");
+  });
+
+  it("takes - as the --source value, for stdin", () => {
+    const result = parse(["from-mermaid", "a.tldr", "--source", "-"]);
+    expect(result.ok && result.parsed.options.source).toBe("-");
+  });
+
+  it("keeps the phase 2 flags on their own commands", () => {
+    for (const argv of [
+      ["inspect", "a.tldr", "--png", "out.png"],
+      ["export", "a.tldr", "--append"],
+      ["from-mermaid", "a.tldr", "--png", "out.png"],
+      ["api", "--svg", "out.svg"],
+    ]) {
+      const result = parse(argv);
+      expect(result.ok, argv.join(" ")).toBe(false);
+      expect(!result.ok && result.error).toContain("is not an option of");
+    }
+  });
+
   it("refuses a flag that belongs to another command", () => {
     const result = parse(["shot", "a.tldr", "--create"]);
     expect(result.ok).toBe(false);
@@ -224,5 +292,9 @@ describe("command options", () => {
   it("accepts every global on every command", () => {
     expect(parse(["new", "a.tldr", "--json", "--quiet", "--headed"]).ok).toBe(true);
     expect(parse(["shot", "a.tldr", "--padding", "4", "--page", "Page 2"]).ok).toBe(true);
+    expect(parse(["inspect", "a.tldr", "--allow-lints", "--json"]).ok).toBe(true);
+    expect(parse(["export", "a.tldr", "--png", "o.png", "--pixel-ratio", "3"]).ok).toBe(true);
+    expect(parse(["from-mermaid", "a.tldr", "--source", "-", "--timeout", "9000"]).ok).toBe(true);
+    expect(parse(["api", "--json", "--quiet"]).ok).toBe(true);
   });
 });

@@ -70,6 +70,16 @@ export const COMMAND_OPTIONS = {
   new: {
     from: { type: "string" },
   },
+  export: {
+    svg: { type: "string" },
+    png: { type: "string" },
+    ids: { type: "string" },
+  },
+  "from-mermaid": {
+    source: { type: "string" },
+    append: { type: "boolean" },
+    shot: { type: "string" },
+  },
 } as const satisfies Record<string, OptionsConfig>;
 
 /** Every flag the parser has to recognise, which is the union of the above. */
@@ -78,6 +88,8 @@ const ALL_OPTIONS: OptionsConfig = {
   ...COMMAND_OPTIONS.run,
   ...COMMAND_OPTIONS.shot,
   ...COMMAND_OPTIONS.new,
+  ...COMMAND_OPTIONS.export,
+  ...COMMAND_OPTIONS["from-mermaid"],
 };
 
 /** Defaults for the numeric globals, from the "numbers" table in ARCHITECTURE.md. */
@@ -126,6 +138,12 @@ export interface CommandOptions {
   ids: string[] | undefined;
   /** `new --from <other.tldr>`. */
   from: string | undefined;
+  /** `export --png <out.png>`. */
+  png: string | undefined;
+  /** `from-mermaid --source <path.mmd>`, or `-` for stdin. */
+  source: string | undefined;
+  /** `from-mermaid --append`. */
+  append: boolean;
 }
 
 export interface ParsedCommand {
@@ -142,7 +160,17 @@ export type ParseResult =
   | { ok: false; error: string };
 
 /** Commands this build actually runs. */
-export const IMPLEMENTED_COMMANDS = ["doctor", "help", "new", "run", "shot"] as const;
+export const IMPLEMENTED_COMMANDS = [
+  "api",
+  "doctor",
+  "export",
+  "from-mermaid",
+  "help",
+  "inspect",
+  "new",
+  "run",
+  "shot",
+] as const;
 
 /**
  * Commands CLI.md specifies but this phase does not build yet, with the
@@ -150,15 +178,11 @@ export const IMPLEMENTED_COMMANDS = ["doctor", "help", "new", "run", "shot"] as 
  * answer instead of "unknown command".
  */
 export const PLANNED_COMMANDS: Record<string, string> = {
-  inspect: "phase 2",
-  export: "phase 2",
-  "from-mermaid": "phase 2",
-  api: "phase 2",
   serve: "phase 4",
 };
 
 /** Commands that take exactly one positional, the document. */
-const NEEDS_FILE = new Set(["run", "shot", "new"]);
+const NEEDS_FILE = new Set(["run", "shot", "new", "inspect", "export", "from-mermaid"]);
 
 /**
  * Parse a raw argv tail (everything after `node script`).
@@ -276,6 +300,9 @@ export function parseCommand(
         output: values["output"] as string | undefined,
         ids: splitIds(values["ids"] as string | undefined),
         from: values["from"] as string | undefined,
+        png: values["png"] as string | undefined,
+        source: values["source"] as string | undefined,
+        append: values["append"] === true,
       },
     },
   };

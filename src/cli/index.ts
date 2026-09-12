@@ -2,11 +2,15 @@
 /**
  * `tldrawkc`: draw a diagram on a real tldraw canvas, look at it, fix it.
  *
- *   tldrawkc new <file.tldr>       an empty document
- *   tldrawkc run <file.tldr> ...   load, run a snippet, save, export
- *   tldrawkc shot <file.tldr>      a PNG of what is there
- *   tldrawkc doctor                is this machine able to run the tool
- *   tldrawkc help                  usage for every command
+ *   tldrawkc new <file.tldr>          an empty document
+ *   tldrawkc run <file.tldr> ...      load, run a snippet, save, export
+ *   tldrawkc shot <file.tldr>         a PNG of what is there
+ *   tldrawkc inspect <file.tldr>      what is on the canvas, as text or JSON
+ *   tldrawkc export <file.tldr> ...   the SVG or PNG that gets committed
+ *   tldrawkc from-mermaid <file.tldr> lift a mermaid flowchart onto the canvas
+ *   tldrawkc api                      what a snippet can call
+ *   tldrawkc doctor                   is this machine able to run the tool
+ *   tldrawkc help                     usage for every command
  *
  * Layering rule 3: this is the only module that prints. Everything under
  * `src/lib/` returns data, which is why `--json` and the human summary can
@@ -21,10 +25,23 @@
 
 import process from "node:process";
 
-import { run, shot, newDocument, type RunResult } from "../lib/canvas.js";
+import {
+  exportCanvas,
+  fromMermaid,
+  inspect,
+  newDocument,
+  run,
+  shot,
+  type ExportResult,
+  type FromMermaidResult,
+  type RunResult,
+} from "../lib/canvas.js";
+import { readApiReference, type HelperDoc } from "../lib/api.js";
 import { doctor, type DoctorReport } from "../lib/doctor.js";
 import { isTldrawkcError, SnippetError, UsageError } from "../lib/errors.js";
-import type { Lint } from "../lib/browser.js";
+import { readText } from "../lib/files.js";
+import { resolveOutputPath } from "../lib/paths.js";
+import type { InspectData, Lint } from "../lib/browser.js";
 import {
   EXIT,
   IMPLEMENTED_COMMANDS,
@@ -43,12 +60,22 @@ Commands
       --code <path>              JavaScript file, or - to read stdin
       --eval <source>            inline source (mutually exclusive with --code)
       --shot <out.png>           write a PNG after the snippet
-      --svg <out.svg>            write an SVG after the snippet (phase 2)
+      --svg <out.svg>            write an SVG after the snippet
       --create                   start from an empty document if the file is missing
       --no-save                  run and export, leave the document untouched
   shot <file.tldr>               screenshot without running anything
       -o, --output <out.png>     where the PNG goes (default: a temp file)
       --ids a,b,c                frame only these shapes
+  inspect <file.tldr>            print every shape, binding and lint. Exits 3 on lints
+  export <file.tldr>             write the files that get committed
+      --svg <out.svg>            self-contained SVG, fonts inlined
+      --png <out.png>            PNG at --pixel-ratio
+      --ids a,b,c                frame only these shapes
+  from-mermaid <file.tldr>       build a document from a mermaid flowchart
+      --source <path.mmd>        the flowchart, or - to read stdin
+      --append                   add to an existing document instead of refusing
+      --shot <out.png>           write a PNG afterwards
+  api                            what a snippet can call, from the helpers' own JSDoc
   doctor                         check node, the page bundle, Chromium and the page
   help                           this text
 
@@ -227,6 +254,178 @@ async function runNew(
   return EXIT.ok;
 }
 
+/**
+ * One line per shape, in the format CLI.md specifies:
+ * `shape:id  geo  x,y  w x h  "text"`.
+ *
+ * Coordinates are rounded because a canvas position is a float and nobody is
+ * reading the sixth decimal place of a box's y. The `.tldr` keeps the exact
+ * value; this is the view.
+ */
+function printInspect(canvas: InspectData): void {
+  const counts =
+    `${String(canvas.shapes.length)} shapes, ` +
+    `${String(canvas.bindings.length)} bindings, ` +
+    `${String(canvas.lints.length)} lint${canvas.lints.length === 1 ? "" : "s"}`;
+  out(`page  ${canvas.page}  (${String(canvas.pages.length)} in the document)  ${counts}`);
+
+  for (const shape of canvas.shapes) {
+    const kind = shape.geo ?? shape.type;
+    const position = `${String(Math.round(shape.x))},${String(Math.round(shape.y))}`;
+    const size = `${String(Math.round(shape.w))} x ${String(Math.round(shape.h))}`;
+    const label = shape.text === null ? "" : `  ${JSON.stringify(shape.text)}`;
+    out(`${shape.id}  ${kind}  ${position}  ${size}${label}`);
+  }
+
+  for (const binding of canvas.bindings) {
+    out(`bind  ${binding.arrow}  ${binding.from ?? "?"} -> ${binding.to ?? "?"}`);
+  }
+
+  printLints(canvas.lints);
+}
+
+async function runInspect(file: string, globals: GlobalOptions): Promise<number> {
+  const result = await inspect({
+    file,
+    page: globals.page,
+    allowLints: globals.allowLints,
+    chromium: globals.chromium,
+    headed: globals.headed,
+  });
+
+  // The bridge structure, printed exactly as ARCHITECTURE.md defines it. A
+  // wrapper object here would make every consumer unwrap one level to get at
+  // the shape the design document already named.
+  if (globals.json) printJson(result.canvas);
+  else if (!globals.quiet) printInspect(result.canvas);
+  return result.exitCode;
+}
+
+function printExport(result: ExportResult): void {
+  if (result.svg) {
+    out(`svg   ${result.svg.path}  ${String(result.svg.width)}x${String(result.svg.height)}`);
+  }
+  if (result.png) {
+    out(`png   ${result.png.path}  ${String(result.png.width)}x${String(result.png.height)}`);
+  }
+}
+
+async function runExport(
+  file: string,
+  globals: GlobalOptions,
+  options: CommandOptions,
+): Promise<number> {
+  const result = await exportCanvas({
+    file,
+    svg: options.svg,
+    png: options.png,
+    ids: options.ids,
+    page: globals.page,
+    padding: globals.padding,
+    pixelRatio: globals.pixelRatio,
+    chromium: globals.chromium,
+    headed: globals.headed,
+  });
+
+  if (globals.json) {
+    printJson({ file: result.file, svg: result.svg, png: result.png, ms: result.ms });
+  } else if (!globals.quiet) {
+    printExport(result);
+  }
+  return result.exitCode;
+}
+
+function printFromMermaid(result: FromMermaidResult, allowLints: boolean): void {
+  const nodes = Object.keys(result.nodes).length;
+  const containers = result.containers.length;
+  out(
+    `${String(nodes)} node${nodes === 1 ? "" : "s"}, ` +
+      `${String(result.edges.length)} edge${result.edges.length === 1 ? "" : "s"}, ` +
+      `${String(containers)} container${containers === 1 ? "" : "s"}, ` +
+      `${String(result.shapeCount)} shapes, ${String(result.ms)} ms`,
+  );
+  out(`saved ${result.file}`);
+  if (result.shot) out(`shot  ${result.shot}`);
+  printLints(result.lints);
+  if (result.lints.length > 0 && allowLints) out("lints allowed (--allow-lints), exiting 0");
+}
+
+async function runFromMermaid(
+  file: string,
+  globals: GlobalOptions,
+  options: CommandOptions,
+): Promise<number> {
+  if (options.source === undefined) {
+    throw new UsageError("from-mermaid needs --source <path.mmd>, or --source - for stdin.");
+  }
+  const source = options.source === "-" ? await readStdin() : await readSourceFile(options.source);
+
+  const result = await fromMermaid({
+    file,
+    source,
+    append: options.append,
+    shot: options.shot,
+    allowLints: globals.allowLints,
+    page: globals.page,
+    padding: globals.padding,
+    pixelRatio: globals.pixelRatio,
+    timeoutMs: globals.timeoutMs,
+    chromium: globals.chromium,
+    headed: globals.headed,
+  });
+
+  if (globals.json) {
+    printJson({
+      file: result.file,
+      nodes: result.nodes,
+      edges: result.edges,
+      containers: result.containers,
+      unsupported: result.unsupported,
+      shapeCount: result.shapeCount,
+      lints: result.lints,
+      shot: result.shot,
+      ms: result.ms,
+    });
+  } else if (!globals.quiet) {
+    printFromMermaid(result, globals.allowLints);
+    // On stderr, so a human sees it next to the summary and `--json` still
+    // prints exactly one object on stdout. Never dropped: a diagram that
+    // silently lost three statements looks finished and is not.
+    for (const line of result.unsupported) {
+      process.stderr.write(`unsupported: ${line}\n`);
+    }
+  }
+  return result.exitCode;
+}
+
+/** Read a `--source` path, with a usage error rather than a stack on ENOENT. */
+async function readSourceFile(input: string): Promise<string> {
+  const target = resolveOutputPath(input);
+  const text = await readText(target);
+  if (text === null) throw new UsageError(`--source ${target} does not exist.`);
+  return text;
+}
+
+/** One block per helper: the signature, the summary, then each example. */
+function printApi(docs: HelperDoc[]): void {
+  docs.forEach((doc, index) => {
+    if (index > 0) out("");
+    out(doc.signature);
+    if (doc.summary) out(`  ${doc.summary}`);
+    for (const param of doc.params) out(`  @param ${param}`);
+    for (const example of doc.examples) {
+      for (const line of example.split("\n")) out(`  ${line}`);
+    }
+  });
+}
+
+async function runApi(globals: GlobalOptions): Promise<number> {
+  const docs = await readApiReference();
+  if (globals.json) printJson(docs);
+  else if (!globals.quiet) printApi(docs);
+  return EXIT.ok;
+}
+
 async function main(): Promise<number> {
   const result = parseCommand(process.argv.slice(2));
   if (!result.ok) throw new UsageError(`${result.error}\nRun "tldrawkc help" for usage.`);
@@ -247,6 +446,14 @@ async function main(): Promise<number> {
       return await runShot(file, globals, options);
     case "new":
       return await runNew(file, globals, options);
+    case "inspect":
+      return await runInspect(file, globals);
+    case "export":
+      return await runExport(file, globals, options);
+    case "from-mermaid":
+      return await runFromMermaid(file, globals, options);
+    case "api":
+      return await runApi(globals);
     default:
       // parseCommand has already rejected everything else; this arm exists so
       // adding a command to IMPLEMENTED_COMMANDS without wiring it here is
