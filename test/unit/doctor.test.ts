@@ -57,7 +57,10 @@ describe("write access", () => {
   });
 
   it("reports every check by name", async () => {
-    const report = await doctor({ chromium: "/definitely/not/a/browser" });
+    const report = await doctor({
+      chromium: "/definitely/not/a/browser",
+      cwd: os.tmpdir(),
+    });
     expect(report.checks.map((check) => check.name)).toEqual([
       "node",
       "page bundle",

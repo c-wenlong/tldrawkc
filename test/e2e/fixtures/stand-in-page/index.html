@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>tldrawkc stand-in page</title>
+  </head>
+  <body>
+    <div id="root">stand-in bridge</div>
+    <!--
+      A page that answers the bridge contract without tldraw.
+
+      It exists so the Node half of the tool is testable on its own: exit
+      codes, atomic saves, rollback, the temp-file screenshot path and the
+      capability check are all decisions Node makes, and none of them should
+      need a two megabyte editor bundle to prove. The real page is checked by
+      the CLI suite next door, against what it actually drew.
+
+      It is deliberately not a tldraw emulator. Shapes are objects in an array,
+      `connect` records a binding, and the only lint rule is the one the real
+      page also has to have: an arrow with a free end.
+    -->
+    <script>
+      (() => {
+        /** Everything the stand-in knows, reset by `load`. */
+        const state = { pages: ["Page 1"], page: "Page 1", shapes: [] };
+
+        const clone = (value) => JSON.parse(JSON.stringify(value));
+
+        const editor = {
+          createShape(shape) {
+            state.shapes.push({ bindings: [], ...clone(shape) });
+            return shape.id;
+          },
+          getCurrentPageShapes: () => clone(state.shapes),
+        };
+
+        const helpers = {
+          box(id, label, options = {}) {
+            const shapeId = `shape:${id}`;
+            state.shapes.push({
+              id: shapeId,
+              type: "geo",
+              typeName: "shape",
+              x: options.x ?? 0,
+              y: options.y ?? 0,
+              props: { w: options.w ?? 180, h: options.h ?? 64, text: label },
+              bindings: [],
+            });
+            return shapeId;
+          },
+          connect(fromId, toId, options = {}) {
+            const shapeId = `shape:arrow-${fromId}-${toId}`;
+            state.shapes.push({
+              id: shapeId,
+              type: "arrow",
+              typeName: "shape",
+              x: 0,
+              y: 0,
+              props: { text: options.label ?? "" },
+              bindings: [`shape:${fromId}`, `shape:${toId}`],
+            });
+            return shapeId;
+          },
+          getLints: () => lints(),
+        };
+
+        /** The one rule the real lint pass must also have. */
+        function lints() {
+          return state.shapes
+            .filter((shape) => shape.type === "arrow" && (shape.bindings ?? []).length < 2)
+            .map((shape) => ({
+              rule: "friendless-arrow",
+              shapeIds: [shape.id],
+              message: `arrow ${shape.id} has no binding at its end`,
+            }));
+        }
+
+        /** A real PNG, big enough that "larger than 10 kB" means something. */
+        function png() {
+          const canvas = document.createElement("canvas");
+          canvas.width = 480;
+          canvas.height = 320;
+          const context = canvas.getContext("2d");
+          context.fillStyle = "#ffffff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          for (let i = 0; i < state.shapes.length + 1; i += 1) {
+            context.fillStyle = `hsl(${i * 47}, 70%, 45%)`;
+            context.fillRect(10 + i * 24, 10 + i * 18, 140, 90);
+          }
+          return { dataUrl: canvas.toDataURL("image/png"), width: canvas.width, height: canvas.height };
+        }
+
+        window.__tldrawkc = {
+          ping: () => ({ ok: true, version: "stand-in" }),
+
+          load(tldrJson) {
+            state.pages = ["Page 1"];
+            state.page = "Page 1";
+            state.shapes = [];
+            if (tldrJson) {
+              const parsed = JSON.parse(tldrJson);
+              state.shapes = (parsed.records ?? []).filter((record) => record.typeName === "shape");
+              if (Array.isArray(parsed.pages) && parsed.pages.length > 0) state.pages = parsed.pages;
+            }
+            return { pages: [...state.pages], shapeCount: state.shapes.length };
+          },
+
+          setPage(name) {
+            if (name === null) {
+              state.page = state.pages[0];
+              return { page: state.page };
+            }
+            if (!state.pages.includes(name)) throw new Error(`no page named "${name}"`);
+            state.page = name;
+            return { page: name };
+          },
+
+          async exec(source) {
+            // The rollback contract: a snippet that throws leaves the document
+            // exactly as it was, which is what makes exit 2 safe to act on.
+            const mark = clone(state.shapes);
+            try {
+              const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor;
+              const body = new AsyncFunction("editor", "helpers", "tldraw", source);
+              const result = await body(editor, helpers, { createShapeId: (id) => `shape:${id}` });
+              return {
+                result: result === undefined ? null : clone(result),
+                lints: lints(),
+                shapeCount: state.shapes.length,
+              };
+            } catch (error) {
+              state.shapes = mark;
+              throw error;
+            }
+          },
+
+          save: () =>
+            JSON.stringify({
+              tldrawFileFormatVersion: 1,
+              schema: { schemaVersion: 2 },
+              pages: state.pages,
+              records: state.shapes,
+            }),
+
+          shot(options = {}) {
+            const image = png();
+            const ids = options.ids ?? state.shapes.map((shape) => shape.id);
+            return {
+              pngBase64: image.dataUrl,
+              width: image.width,
+              height: image.height,
+              bounds: { x: 0, y: 0, w: image.width, h: image.height },
+              ids,
+            };
+          },
+
+          lints,
+          zoomToFit: () => ({ x: 0, y: 0, w: 480, h: 320 }),
+        };
+      })();
+    </script>
+  </body>
+</html>
