@@ -388,6 +388,15 @@ Collected as they are found, so they are not rediscovered.
   right-edge anchors with `bend: 300` came back with page bounds 300 units
   wider on its right. So compute the sign as a dot product against the side
   you want rather than guessing.
+- **An arrow's `getGeometry` is a `Group2d` with exactly one non-label child.**
+  `ArrowShapeUtil` builds an `Edge2d` for a straight arrow, a `Polyline2d` of
+  the elbow route, or an `Arc2d` for a bend, and adds a `Rectangle2d` with
+  `isLabel: true` when there is a label. `Geometry2d`'s `vertices` getter asks
+  for them with `EXCLUDE_LABELS`, so it is the path and nothing else, and an
+  arc arrives already sampled into a polyline. That is what
+  `arrow-crosses-shape` walks. `Group2d.getVertices` concatenates its children
+  with no separator, so this only reads as one path because the arrow has one
+  body; do not assume it for another shape type.
 - **A note shape has no `w` or `h`.** `TLNoteShapeProps` carries `size`,
   `growY` and `fontSizeAdjustment`; tldraw sizes the note from its `size`
   style, grows it down to fit, and shrinks the font rather than overflowing.

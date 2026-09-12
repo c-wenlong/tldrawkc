@@ -472,6 +472,14 @@ describe("from-mermaid", () => {
       // and that is a nudge for the agent; an arrow pointing at nothing is a
       // broken diagram.
       expect(canvas.lints.filter((lint) => lint.rule === "friendless-arrow")).toEqual([]);
+      // The one rule the map is expected to fail. Thirty-two nodes on a grid
+      // and seventy edges between them cannot avoid it, which is exactly what
+      // it was added to show; no count is pinned here because the layout is
+      // free to improve.
+      expect(
+        canvas.lints.some((lint) => lint.rule === "arrow-crosses-shape"),
+        "arrow-crosses-shape never fired, so the rule is not reaching the browser",
+      ).toBe(true);
 
       const exported = await cli(["export", "diagram.tldr", "--svg", "map.svg"]);
       expect(exported.code).toBe(0);

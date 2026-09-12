@@ -8,9 +8,9 @@
  * which is where the browser's own text measurement happens, is
  * `collectLintRecords` in `helpers/read.ts`.
  *
- * All six rules from HELPERS.md live here: `friendless-arrow`,
+ * All seven rules live here: the six from HELPERS.md (`friendless-arrow`,
  * `overlapping-text`, `overlapping-shapes`, `off-page`, `empty-label` and
- * `unreadable-label`.
+ * `unreadable-label`) plus `arrow-crosses-shape`, which phase 3 adds.
  */
 
 import type { Rect } from "./geometry.js";
@@ -45,6 +45,18 @@ export interface LintShape {
   text?: string;
   /** The geo kind (`rectangle`, `diamond`, ...). Geo shapes only. */
   geo?: string;
+  /**
+   * The shape this one hangs off: a page, a frame, or a container. Read by
+   * `arrow-crosses-shape`, which exempts an arrow from the shape it lives in.
+   */
+  parentId?: string;
+  /**
+   * The arrow's rendered path in page coordinates, as the vertices tldraw's
+   * own geometry reports: the two ends of a straight arrow, the corners of an
+   * elbow route, or an arc sampled into a polyline. Arrows only, and absent
+   * when the geometry could not be read.
+   */
+  points?: readonly { x: number; y: number }[];
   /** The fill style (`none`, `solid`, ...). Geo shapes only. */
   fill?: string;
   /**
@@ -81,6 +93,7 @@ export interface LintBinding {
 /** Every rule name, in the order {@link runLints} runs them. */
 export const LINT_RULES = [
   "friendless-arrow",
+  "arrow-crosses-shape",
   "overlapping-text",
   "overlapping-shapes",
   "off-page",
@@ -114,6 +127,25 @@ export const OFF_PAGE_LIMIT = 10000;
  * a tenth of the smaller one is a collision.
  */
 export const OVERLAP_AREA_FRACTION = 0.1;
+
+/**
+ * How far inside a shape an arrow has to run before `arrow-crosses-shape`
+ * fires, in page units.
+ *
+ * An arrow that touches a box is not the same thing as an arrow that runs
+ * through it, and the difference is about the width of the ink. tldraw draws a
+ * size `m` shape at a stroke width of 3.5 page units, so the arrow's own half
+ * stroke plus the box outline's half stroke is 3.5 units of overlap before a
+ * reader sees anything but two lines meeting. 4 is that, rounded up, and it
+ * also absorbs the error in sampling an arc: the rule walks the arc as a
+ * polyline, so a chord can cut a corner the curve itself clears.
+ *
+ * It is a threshold on depth, not on length: the shape's page box is shrunk by
+ * this much on every side and the arrow has to cross what is left. Anything
+ * larger starts hiding a real crossing of a small box, which is the finding
+ * this rule exists for.
+ */
+export const ARROW_CROSSING_TOLERANCE = 4;
 
 /** Slack on `unreadable-label`, in page units, to absorb sub-pixel measurement. */
 const LABEL_WIDTH_TOLERANCE = 1;
@@ -183,6 +215,148 @@ export function friendlessArrows(
       shapeIds: [shape.id],
       message: `arrow ${shape.id} has no binding at its ${loose.join(" or ")}`,
     });
+  }
+  return lints;
+}
+
+/**
+ * Shrink a rectangle by `inset` on every side, or `null` when nothing is left.
+ *
+ * A box thinner than twice the tolerance has no interior worth talking about,
+ * and an arrow cannot meaningfully run "through" it, so it drops out rather
+ * than becoming a rectangle with negative sides.
+ */
+export function insetRect(rect: Rect, inset: number): Rect | null {
+  const w = rect.w - inset * 2;
+  const h = rect.h - inset * 2;
+  if (w <= 0 || h <= 0) return null;
+  return { x: rect.x + inset, y: rect.y + inset, w, h };
+}
+
+/**
+ * Does the segment `a`-`b` share any length with the rectangle?
+ *
+ * Liang and Barsky's clip, which is the cheap way to ask this without a case
+ * per edge: each of the four half-planes narrows the parameter range the
+ * segment is allowed to keep, and whatever survives all four is the part
+ * inside. `t1 > t0` rather than `>=`, so a segment that only runs along an
+ * edge, or touches a corner, is not inside anything.
+ *
+ * A segment wholly inside the rectangle keeps its whole range and so counts,
+ * which is the case that matters for an elbow arrow whose corner lands in a
+ * box it never leaves.
+ */
+export function segmentCrossesRect(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  rect: Rect,
+): boolean {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+
+  const clip = (p: number, q: number): boolean => {
+    // Parallel to this pair of edges. `> 0` and not `>= 0`, so a segment lying
+    // exactly along an edge has no depth inside and is not a crossing.
+    if (p === 0) return q > 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  };
+
+  if (!clip(-dx, a.x - rect.x)) return false;
+  if (!clip(dx, rect.x + rect.w - a.x)) return false;
+  if (!clip(-dy, a.y - rect.y)) return false;
+  if (!clip(dy, rect.y + rect.h - a.y)) return false;
+  return t1 > t0;
+}
+
+/** Does any leg of a path run through the rectangle? */
+function pathCrossesRect(
+  points: readonly { x: number; y: number }[],
+  rect: Rect,
+): boolean {
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) continue;
+    if (segmentCrossesRect(a, b, rect)) return true;
+  }
+  return false;
+}
+
+/**
+ * `arrow-crosses-shape`: an arrow drawn straight through something it has
+ * nothing to do with.
+ *
+ * The failure this catches is the one a reader hits first and the other rules
+ * all miss: a long arrow between two distant boxes routed over the top of the
+ * six boxes in between, so the picture reads as seven connections instead of
+ * one. `overlapping-shapes` skips arrows on purpose, because an arrow touching
+ * a box is how arrows work; this rule is about the shapes an arrow touches
+ * that are not its own.
+ *
+ * Exempt: the two shapes the arrow is bound to, since arriving at them is the
+ * point; a container (`meta.container`), since arrows are expected to cross
+ * into and out of a group; the arrow's own parent, for the same reason on a
+ * frame; and either shape carrying this rule in `meta.lintIgnore`. Only geo
+ * and note shapes count as something to run through, because a text shape has
+ * no outline for a line to disappear behind.
+ *
+ * See {@link ARROW_CROSSING_TOLERANCE} for how far in is far enough.
+ */
+export function arrowCrossesShape(
+  shapes: readonly LintShape[],
+  bindings: readonly LintBinding[],
+): Lint[] {
+  const boundTo = new Map<string, Set<string>>();
+  for (const binding of bindings) {
+    if (binding.type !== "arrow") continue;
+    let bound = boundTo.get(binding.fromId);
+    if (!bound) {
+      bound = new Set<string>();
+      boundTo.set(binding.fromId, bound);
+    }
+    bound.add(binding.toId);
+  }
+
+  const crossable = shapes.filter(
+    (shape) =>
+      (shape.type === "geo" || shape.type === "note") &&
+      shape.bounds !== undefined &&
+      !isContainer(shape) &&
+      !isLintIgnored(shape, "arrow-crosses-shape"),
+  );
+
+  const lints: Lint[] = [];
+  for (const arrow of shapes) {
+    if (arrow.type !== "arrow") continue;
+    const points = arrow.points;
+    if (!points || points.length < 2) continue;
+    if (isLintIgnored(arrow, "arrow-crosses-shape")) continue;
+    const bound = boundTo.get(arrow.id);
+    for (const shape of crossable) {
+      if (shape.id === arrow.id) continue;
+      if (bound?.has(shape.id) === true) continue;
+      if (arrow.parentId !== undefined && arrow.parentId === shape.id) continue;
+      const bounds = shape.bounds;
+      if (!bounds) continue;
+      const inner = insetRect(bounds, ARROW_CROSSING_TOLERANCE);
+      if (!inner) continue;
+      if (!pathCrossesRect(points, inner)) continue;
+      lints.push({
+        rule: "arrow-crosses-shape",
+        shapeIds: [arrow.id, shape.id],
+        message: `arrow ${arrow.id} passes through ${shape.id}, which is neither shape it connects`,
+      });
+    }
   }
   return lints;
 }
@@ -356,6 +530,7 @@ export function runLints(
 ): Lint[] {
   return [
     ...friendlessArrows(shapes, bindings),
+    ...arrowCrossesShape(shapes, bindings),
     ...overlappingText(shapes),
     ...overlappingShapes(shapes),
     ...offPage(shapes),

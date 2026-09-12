@@ -195,6 +195,25 @@ function labelWidthOf(editor: Editor, shape: TLShape, boundsWidth: number): numb
 }
 
 /**
+ * An arrow's rendered path, in page coordinates.
+ *
+ * `ArrowShapeUtil.getGeometry` returns a `Group2d` whose one non-label child
+ * is the body: an `Edge2d` for a straight arrow, a `Polyline2d` of the route
+ * for an elbow, or an `Arc2d` for a bend. `Geometry2d`'s `vertices` getter
+ * asks for them with labels excluded, so this is the line itself and not the
+ * box the label sits in, and an arc arrives already sampled into a polyline.
+ * The transform is what puts it in page space, which is the vocabulary the
+ * lint rules work in.
+ */
+function arrowPathOf(editor: Editor, shape: TLShape): { x: number; y: number }[] {
+  const transform = editor.getShapePageTransform(shape.id);
+  return editor.getShapeGeometry(shape).vertices.map((vertex) => {
+    const point = transform.applyToPoint(vertex);
+    return { x: point.x, y: point.y };
+  });
+}
+
+/**
  * Does this shape resize itself to whatever its text needs?
  *
  * An auto-sized `text` shape does, and a `note` shrinks its font instead of
@@ -223,8 +242,18 @@ export function collectLintRecords(editor: Editor): {
       ? { x: box.x, y: box.y, w: box.w, h: box.h }
       : undefined;
     const text = plainTextOf(editor, shape);
-    const record: LintShape = { id: shape.id, type: shape.type, meta: shape.meta, text };
+    const record: LintShape = {
+      id: shape.id,
+      type: shape.type,
+      meta: shape.meta,
+      text,
+      parentId: shape.parentId,
+    };
     if (bounds) record.bounds = bounds;
+    if (shape.type === "arrow") {
+      const path = arrowPathOf(editor, shape);
+      if (path.length >= 2) record.points = path;
+    }
     const label = labelBoundsOf(editor, shape);
     if (label) record.labelBounds = label;
     const geo = propOf<string>(shape, "geo");

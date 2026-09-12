@@ -10,8 +10,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ARROW_CROSSING_TOLERANCE,
+  arrowCrossesShape,
   emptyLabels,
   friendlessArrows,
+  insetRect,
   intersectionArea,
   isContainer,
   isLintIgnored,
@@ -21,6 +24,7 @@ import {
   overlappingShapes,
   overlappingText,
   runLints,
+  segmentCrossesRect,
   unreadableLabels,
   type LintBinding,
   type LintShape,
@@ -98,6 +102,244 @@ describe("friendless-arrow", () => {
       "shape:2",
       "shape:3",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// arrow-crosses-shape
+// ---------------------------------------------------------------------------
+
+/** A geo shape with page bounds, for the crossing rule to run into. */
+const obstacle = (
+  id: string,
+  bounds: { x: number; y: number; w: number; h: number },
+  meta?: Record<string, unknown>,
+): LintShape => ({ id, type: "geo", bounds, ...(meta ? { meta } : {}) });
+
+/** An arrow carrying a rendered path, in page coordinates. */
+const routed = (
+  id: string,
+  points: { x: number; y: number }[],
+  extra: Partial<LintShape> = {},
+): LintShape => ({ id, type: "arrow", points, ...extra });
+
+/** `a` on the left, `b` on the right, and an arrow bound between them. */
+const LEFT = obstacle("shape:a", { x: 0, y: 0, w: 100, h: 60 });
+const RIGHT = obstacle("shape:b", { x: 400, y: 0, w: 100, h: 60 });
+const BOUND = [bind("shape:x", "shape:a", "start"), bind("shape:x", "shape:b", "end")];
+
+describe("arrow-crosses-shape", () => {
+  it("passes an arrow that runs between its two shapes and touches nothing else", () => {
+    const shapes = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:aside", { x: 180, y: 200, w: 100, h: 60 }),
+      routed("shape:x", [
+        { x: 100, y: 30 },
+        { x: 400, y: 30 },
+      ]),
+    ];
+    expect(arrowCrossesShape(shapes, BOUND)).toEqual([]);
+  });
+
+  it("flags an elbow route whose leg cuts through a third box", () => {
+    const shapes = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:mid", { x: 150, y: 170, w: 100, h: 60 }),
+      routed("shape:x", [
+        { x: 50, y: 60 },
+        { x: 50, y: 200 },
+        { x: 450, y: 200 },
+      ]),
+    ];
+    const lints = arrowCrossesShape(shapes, BOUND);
+    expect(lints).toHaveLength(1);
+    expect(lints[0]?.rule).toBe("arrow-crosses-shape");
+    expect(lints[0]?.shapeIds).toEqual(["shape:x", "shape:mid"]);
+    expect(lints[0]?.message).toBe(
+      "arrow shape:x passes through shape:mid, which is neither shape it connects",
+    );
+  });
+
+  it("flags an arc, which arrives already sampled into a polyline", () => {
+    // A bend to the right of a straight run up the page, the shape a mermaid
+    // back edge takes, with a box parked under its apex.
+    const arc = [0, 0.25, 0.5, 0.75, 1].map((t) => ({
+      x: 200 + Math.sin(t * Math.PI) * 160,
+      y: 400 - t * 400,
+    }));
+    const shapes = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:apex", { x: 320, y: 170, w: 90, h: 60 }),
+      routed("shape:x", arc),
+    ];
+    const lints = arrowCrossesShape(shapes, BOUND);
+    expect(lints.map((lint) => lint.shapeIds[1])).toEqual(["shape:apex"]);
+  });
+
+  it("stays quiet when the arrow only grazes a corner, and fires once it is properly inside", () => {
+    // The arrow runs along y = 30. A box whose top edge is at y = 28 is two
+    // units deep, which is ink rather than a crossing; at y = 24 it is six,
+    // which is past the tolerance.
+    const grazed = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:near", { x: 180, y: 30 - (ARROW_CROSSING_TOLERANCE - 2), w: 100, h: 60 }),
+      routed("shape:x", [
+        { x: 100, y: 30 },
+        { x: 400, y: 30 },
+      ]),
+    ];
+    expect(arrowCrossesShape(grazed, BOUND)).toEqual([]);
+
+    const crossed = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:near", { x: 180, y: 30 - (ARROW_CROSSING_TOLERANCE + 2), w: 100, h: 60 }),
+      routed("shape:x", [
+        { x: 100, y: 30 },
+        { x: 400, y: 30 },
+      ]),
+    ];
+    expect(arrowCrossesShape(crossed, BOUND)).toHaveLength(1);
+  });
+
+  it("exempts a container, because crossing into a group is the point of a group", () => {
+    const shapes = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:group", { x: 140, y: -40, w: 200, h: 140 }, { container: true }),
+      routed("shape:x", [
+        { x: 100, y: 30 },
+        { x: 400, y: 30 },
+      ]),
+    ];
+    expect(arrowCrossesShape(shapes, BOUND)).toEqual([]);
+  });
+
+  it("exempts the two shapes the arrow is bound to, and the parent it lives in", () => {
+    // The path runs the whole width of both endpoints and of the frame the
+    // arrow hangs off, and none of the three is a finding.
+    const shapes = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:frame", { x: -100, y: -100, w: 800, h: 400 }),
+      routed(
+        "shape:x",
+        [
+          { x: 10, y: 30 },
+          { x: 490, y: 30 },
+        ],
+        { parentId: "shape:frame" },
+      ),
+    ];
+    expect(arrowCrossesShape(shapes, BOUND)).toEqual([]);
+  });
+
+  it("honours lintIgnore on the arrow and on the shape it crosses", () => {
+    const mid = { x: 180, y: 0, w: 100, h: 60 };
+    const path = [
+      { x: 100, y: 30 },
+      { x: 400, y: 30 },
+    ];
+    const mutedArrow = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:mid", mid),
+      routed("shape:x", path, { meta: { lintIgnore: ["arrow-crosses-shape"] } }),
+    ];
+    expect(arrowCrossesShape(mutedArrow, BOUND)).toEqual([]);
+
+    const mutedShape = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:mid", mid, { lintIgnore: ["arrow-crosses-shape"] }),
+      routed("shape:x", path),
+    ];
+    expect(arrowCrossesShape(mutedShape, BOUND)).toEqual([]);
+
+    const mutedElsewhere = [
+      LEFT,
+      RIGHT,
+      obstacle("shape:mid", mid, { lintIgnore: ["overlapping-shapes"] }),
+      routed("shape:x", path),
+    ];
+    expect(arrowCrossesShape(mutedElsewhere, BOUND)).toHaveLength(1);
+  });
+
+  it("skips an arrow with no path, and a shape kind with no outline", () => {
+    const noPath = [LEFT, RIGHT, obstacle("shape:mid", { x: 180, y: 0, w: 100, h: 60 })];
+    expect(arrowCrossesShape([...noPath, { id: "shape:x", type: "arrow" }], BOUND)).toEqual([]);
+
+    const label: LintShape = {
+      id: "shape:label",
+      type: "text",
+      bounds: { x: 180, y: 0, w: 100, h: 60 },
+    };
+    const shapes = [
+      LEFT,
+      RIGHT,
+      label,
+      routed("shape:x", [
+        { x: 100, y: 30 },
+        { x: 400, y: 30 },
+      ]),
+    ];
+    expect(arrowCrossesShape(shapes, BOUND)).toEqual([]);
+  });
+
+  it("flags a note, which is an outline a line can hide behind", () => {
+    const note: LintShape = {
+      id: "shape:aside",
+      type: "note",
+      bounds: { x: 180, y: 0, w: 100, h: 60 },
+    };
+    const shapes = [
+      LEFT,
+      RIGHT,
+      note,
+      routed("shape:x", [
+        { x: 100, y: 30 },
+        { x: 400, y: 30 },
+      ]),
+    ];
+    expect(arrowCrossesShape(shapes, BOUND).map((lint) => lint.shapeIds[1])).toEqual([
+      "shape:aside",
+    ]);
+  });
+});
+
+describe("segmentCrossesRect", () => {
+  const rect = { x: 0, y: 0, w: 100, h: 100 };
+
+  it("is true for a segment straight through, and for one wholly inside", () => {
+    expect(segmentCrossesRect({ x: -50, y: 50 }, { x: 150, y: 50 }, rect)).toBe(true);
+    expect(segmentCrossesRect({ x: 20, y: 20 }, { x: 80, y: 80 }, rect)).toBe(true);
+  });
+
+  it("is false for a segment that misses, stops short, or only runs along an edge", () => {
+    expect(segmentCrossesRect({ x: -50, y: 150 }, { x: 150, y: 150 }, rect)).toBe(false);
+    expect(segmentCrossesRect({ x: -50, y: 50 }, { x: -10, y: 50 }, rect)).toBe(false);
+    expect(segmentCrossesRect({ x: -50, y: 0 }, { x: 150, y: 0 }, rect)).toBe(false);
+    expect(segmentCrossesRect({ x: -50, y: -50 }, { x: 0, y: 0 }, rect)).toBe(false);
+  });
+});
+
+describe("insetRect", () => {
+  it("shrinks on every side", () => {
+    expect(insetRect({ x: 10, y: 10, w: 100, h: 80 }, 4)).toEqual({
+      x: 14,
+      y: 14,
+      w: 92,
+      h: 72,
+    });
+  });
+
+  it("gives back nothing when there is no interior left", () => {
+    expect(insetRect({ x: 0, y: 0, w: 8, h: 80 }, 4)).toBeNull();
+    expect(insetRect({ x: 0, y: 0, w: 4, h: 80 }, 4)).toBeNull();
   });
 });
 

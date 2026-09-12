@@ -278,8 +278,8 @@ export function createHelpers(editor: Editor): HelpersHandle {
    *
    * A geo rectangle sent to the back, not a frame, so the shapes inside keep
    * their page coordinates. It carries `meta.container = true`, which is how
-   * the lint pass knows to exempt it from `overlapping-shapes` and
-   * `empty-label`.
+   * the lint pass knows to exempt it from `overlapping-shapes`, `empty-label`
+   * and `arrow-crosses-shape`.
    *
    * @example
    * helpers.boxShapes(['png', 'svg'], { label: 'exports', margin: 40 })
@@ -340,7 +340,12 @@ export function createHelpers(editor: Editor): HelpersHandle {
   }
 
   /**
-   * Run the lint pass over the current page and return the findings.
+   * Run the lint pass over the current page and return the findings. Seven
+   * rules: `friendless-arrow`, `arrow-crosses-shape`, `overlapping-text`,
+   * `overlapping-shapes`, `off-page`, `empty-label` and `unreadable-label`.
+   *
+   * `meta.lintIgnore` on a shape mutes a rule for it: an array of rule names,
+   * or `true` for all of them.
    *
    * @example
    * return helpers.getLints()

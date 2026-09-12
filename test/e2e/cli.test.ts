@@ -160,6 +160,23 @@ describe("run", () => {
     expect(await fs.readFile(file)).toEqual(before);
   });
 
+  it("exits 3 when an arrow is drawn straight through a third box", async () => {
+    await writeSnippet(
+      "through.js",
+      `helpers.box('a', 'alpha', { x: 0, y: 0, w: 160, h: 64 })
+       helpers.box('b', 'beta', { x: 300, y: 0, w: 160, h: 64 })
+       helpers.box('c', 'gamma', { x: 600, y: 0, w: 160, h: 64 })
+       helpers.connect('a', 'c', { label: 'skips over beta' })`,
+    );
+
+    const result = await cli(["run", "diagram.tldr", "--code", "through.js", "--create", "--json"]);
+    expect(result.code).toBe(3);
+    const json = JSON.parse(result.stdout) as RunJson;
+    const crossing = json.lints.filter((lint) => lint.rule === "arrow-crosses-shape");
+    expect(crossing).toHaveLength(1);
+    expect(crossing[0]?.message).toContain("shape:b");
+  });
+
   it("exits 3 on a friendless arrow, saves anyway, and 0 with --allow-lints", async () => {
     await writeSnippet(
       "loose.js",
