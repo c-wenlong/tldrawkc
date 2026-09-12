@@ -114,6 +114,21 @@ export function validatePatch(patch: MetaPatch): void {
 }
 
 /**
+ * Refuse to rewrite metadata a newer tldrawkc wrote. See `src/lib/meta.ts`:
+ * this build emits the six fields it knows, so folding a patch into a newer
+ * object would drop what that version added and stamp the result as this one.
+ */
+function refuseNewerSchema(current: DiagramMeta | null): void {
+  if (current !== null && current.kc > META_VERSION) {
+    throw new Error(
+      `tldrawkc: this document's metadata is version ${String(current.kc)} and this ` +
+        `page writes version ${String(META_VERSION)}. Update tldrawkc rather than ` +
+        "letting a snippet drop what the newer version added.",
+    );
+  }
+}
+
+/**
  * Fold a patch into whatever metadata is already there.
  *
  * `created` is written once and then preserved, so amending a diagram never
@@ -125,6 +140,7 @@ export function mergeDocumentMeta(
   nowIso: string,
 ): DiagramMeta {
   validatePatch(patch);
+  refuseNewerSchema(current);
   const base: DiagramMeta = current ?? {
     kc: META_VERSION,
     title: "",

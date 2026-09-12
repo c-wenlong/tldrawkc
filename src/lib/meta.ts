@@ -154,6 +154,26 @@ export function validatePatch(patch: MetaPatch): void {
 }
 
 /**
+ * Refuse to rewrite metadata a newer tldrawkc wrote.
+ *
+ * `readDocumentMeta` keeps a `kc` it does not know, so a reader can decide for
+ * itself. A writer cannot be that relaxed: this build emits exactly the six
+ * fields it knows, so folding a patch into a version 2 object would drop
+ * whatever version 2 added and stamp the result as version 1. That is silent
+ * data loss in a file whose whole job is to be read by something else. Saying
+ * "your tool is older than this file" costs one message and loses nothing.
+ */
+function refuseNewerSchema(current: DiagramMeta | null): void {
+  if (current !== null && current.kc > META_VERSION) {
+    throw new UsageError(
+      `this document's metadata is version ${String(current.kc)} and this tldrawkc ` +
+        `writes version ${String(META_VERSION)}. Rewriting it here would drop whatever ` +
+        "the newer version added. Update tldrawkc, or edit the document with the tool that wrote it.",
+    );
+  }
+}
+
+/**
  * Fold a patch into whatever metadata is already there.
  *
  * `created` is written once and then preserved, which is what makes `meta set`
@@ -167,6 +187,7 @@ export function mergeDocumentMeta(
   nowIso: string,
 ): DiagramMeta {
   validatePatch(patch);
+  refuseNewerSchema(current);
   const base: DiagramMeta = current ?? {
     kc: META_VERSION,
     title: "",

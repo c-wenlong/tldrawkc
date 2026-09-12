@@ -161,6 +161,38 @@ describe("new with metadata", () => {
     await cli(["new", "diagram.tldr"]);
     expect(await metaOf(file)).toBeNull();
   });
+
+  it("reports the metadata --from copied, rather than claiming there is none", async () => {
+    await cli(["new", "diagram.tldr", "--topic", "dot-product", "--title", "Dot product"]);
+    const copied = await cli(["new", "copy.tldr", "--from", "diagram.tldr", "--json"]);
+    expect(copied.code).toBe(0);
+
+    const onDisk = await metaOf(path.join(dir, "copy.tldr"));
+    expect(onDisk?.topic).toBe("dot-product");
+    // What the command said has to match what it wrote.
+    expect((JSON.parse(copied.stdout) as { meta: Meta | null }).meta).toEqual(onDisk);
+  });
+
+  it("refuses to rewrite metadata a newer tldrawkc wrote", async () => {
+    await cli(["new", "diagram.tldr", "--topic", "dot-product"]);
+    const raw = JSON.parse(await fs.readFile(file, "utf8")) as {
+      records: Record<string, unknown>[];
+    };
+    for (const record of raw.records) {
+      if (record["typeName"] !== "document") continue;
+      const bag = record["meta"] as Record<string, Record<string, unknown>>;
+      bag["tldrawkc"] = { ...bag["tldrawkc"], kc: 2, somethingNew: true };
+    }
+    await fs.writeFile(file, JSON.stringify(raw));
+
+    const stamped = await cli(["meta", "set", "diagram.tldr", "--title", "New title"]);
+    expect(stamped.code).toBe(1);
+    expect(stamped.stderr).toContain("version 2");
+    // Nothing was dropped.
+    const after = await metaOf(file);
+    expect(after?.kc).toBe(2);
+    expect((after as unknown as Record<string, unknown>)["somethingNew"]).toBe(true);
+  });
 });
 
 describe("helpers.meta", () => {
@@ -219,6 +251,30 @@ describe("export carries the subject into the SVG", () => {
     expect(svg).toContain("<title>Dot product</title>");
     // On the root element, before anything it contains.
     expect(svg.indexOf("<title>")).toBeLessThan(svg.indexOf("<g"));
+  });
+
+  it("stamps what the snippet set, even under --no-save", async () => {
+    await cli(["new", "diagram.tldr"]);
+    const before = await fs.readFile(file);
+
+    const run = await cli([
+      "run",
+      "diagram.tldr",
+      "--no-save",
+      "--allow-lints",
+      "--svg",
+      "out.svg",
+      "--eval",
+      "helpers.meta({ topic: 'dot-product', title: 'Dot product' }); " + TWO_BOXES,
+    ]);
+    expect(run.code).toBe(0);
+
+    // The SVG carries what the snippet set, not what the file still says.
+    const svg = await fs.readFile(path.join(dir, "out.svg"), "utf8");
+    expect(svg).toContain('data-kc-topic="dot-product"');
+    expect(svg).toContain("<title>Dot product</title>");
+    // And --no-save still means the document was not written.
+    expect(await fs.readFile(file)).toEqual(before);
   });
 
   it("leaves an unstamped document's SVG exactly as tldraw drew it", async () => {

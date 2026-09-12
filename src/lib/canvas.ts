@@ -147,7 +147,10 @@ export async function run(options: RunOptions): Promise<RunResult> {
       }
       const needed: BridgeMethod[] = ["load", "exec"];
       if (options.page !== undefined) needed.push("setPage");
-      if (options.save) needed.push("save");
+      // `--svg` needs the document serialised even under `--no-save`: the
+      // SVG's title and topic come from the document as it now stands, and a
+      // snippet may have called `helpers.meta`. Serialising is a read.
+      if (options.save || options.svg !== undefined) needed.push("save");
       if (options.shot !== undefined) needed.push("shot");
       await requireBridge(canvas, needed);
 
@@ -158,16 +161,18 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
       let saved = false;
       // The document as it now stands, which is what the SVG's title and
-      // topic come from. A snippet may have called `helpers.meta`, so the
-      // text Node loaded is already out of date; the freshly serialised
-      // document is not. With `--no-save` there is nothing fresher than the
-      // file, so that is what gets used.
+      // topic come from. A snippet may have called `helpers.meta`, so the text
+      // Node loaded is already out of date. Serialised even when `--no-save`
+      // forbids writing it, because serialising is a read and the alternative
+      // is an SVG that carries the new drawing under the old subject.
       let current = existing;
-      if (options.save) {
+      if (options.save || options.svg !== undefined) {
         const json = await saveDocument(canvas);
-        await writeText(file, json);
-        saved = true;
         current = json;
+        if (options.save) {
+          await writeText(file, json);
+          saved = true;
+        }
       }
 
       const shot = await exportPng(canvas, options, file);
@@ -769,8 +774,12 @@ export async function newDocument(options: NewDocumentOptions): Promise<NewDocum
       // one and adding an `exec` step for six strings would give a snippet-shaped
       // failure (exit 2) to something that is not a snippet. The document
       // record is plain JSON, and this is the same code `meta set` runs.
+      // With no metadata flags the document is written exactly as tldraw
+      // serialised it, and `--from` means that may already carry metadata
+      // copied from the source. Report what is in the file rather than `null`,
+      // which would say the new document has none while it does.
       const stamped = isEmptyPatch(patch)
-        ? { json: saved, meta: null }
+        ? { json: saved, meta: metaOf(saved) }
         : applyMeta(saved, patch, (options.now ?? new Date()).toISOString(), file);
       try {
         await writeText(file, stamped.json, { exclusive: true });

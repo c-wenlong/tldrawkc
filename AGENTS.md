@@ -196,7 +196,11 @@ Three things to know before touching it.
   browser.
 - **`kc` is the schema version, not a copy of the key.** An indexer reads it
   first and can refuse a shape it was not written against. Bump it only with a
-  reader that handles both.
+  reader that handles both. A **reader** keeps a version it does not know; a
+  **writer** refuses one. This build emits exactly the six fields it knows, so
+  folding a patch into a version 2 object would drop what version 2 added and
+  stamp the result as version 1, which is silent data loss in a file whose
+  whole job is to be read by something else.
 - **The rules exist twice**, in `src/lib/meta.ts` and `src/page/helpers/meta.ts`,
   because layering rule 1 stops the node side importing the page and the page
   has to amend the bag while a snippet runs. `test/unit/meta.test.ts` imports

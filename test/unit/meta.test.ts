@@ -99,6 +99,12 @@ describe("mergeDocumentMeta", () => {
     expect(mergeDocumentMeta(old, { title: "t" }, NOW).kc).toBe(META_VERSION);
   });
 
+  it("refuses to rewrite metadata a newer version wrote", () => {
+    const future = { kc: 2, title: "", topic: "a", concepts: [], source: "", created: NOW };
+    expect(() => mergeDocumentMeta(future, { title: "t" }, NOW)).toThrow(UsageError);
+    expect(() => mergeDocumentMeta(future, { title: "t" }, NOW)).toThrow("version 2");
+  });
+
   it("refuses a topic that is a title rather than a slug", () => {
     expect(() => mergeDocumentMeta(null, { topic: "Vector spaces" }, NOW)).toThrow(UsageError);
     expect(() => mergeDocumentMeta(null, { concepts: ["Dot Product"] }, NOW)).toThrow(UsageError);
@@ -150,6 +156,13 @@ describe("applyMeta", () => {
   it("refuses a document with no document record", () => {
     const orphan = JSON.stringify({ records: [{ id: "shape:a", typeName: "shape" }] });
     expect(() => applyMeta(orphan, { topic: "a" }, NOW)).toThrow(UsageError);
+  });
+
+  it("refuses a document written by a newer tldrawkc rather than downgrading it", () => {
+    const future = tldr({ [META_KEY]: { kc: 2, topic: "a", somethingNew: 1 } });
+    expect(() => applyMeta(future, { title: "t" }, NOW)).toThrow(UsageError);
+    // And the caller's bytes are untouched, because nothing was written.
+    expect(readMeta(future)?.kc).toBe(2);
   });
 
   it("refuses something that is not a .tldr", () => {
@@ -275,7 +288,7 @@ describe("the node and page copies agree", () => {
     null,
     { [META_KEY]: {} },
     { [META_KEY]: "not an object" },
-    { [META_KEY]: { kc: 7, topic: " spaced ", concepts: ["b", "b", " a "] } },
+    { [META_KEY]: { topic: " spaced ", concepts: ["b", "b", " a "] } },
     { [META_KEY]: { title: "T", topic: "t", concepts: [], source: "s", created: NOW } },
   ];
   const patches: MetaPatch[] = [
@@ -302,6 +315,12 @@ describe("the node and page copies agree", () => {
         );
       }
     }
+  });
+
+  it("refuses the same newer schema, even though the error types differ", () => {
+    const future = { [META_KEY]: { kc: 9, topic: "a" } };
+    expect(() => mergeDocumentMeta(readDocumentMeta(future), {}, NOW)).toThrow();
+    expect(() => page.mergeDocumentMeta(page.readDocumentMeta(future), {}, NOW)).toThrow();
   });
 
   it("refuses the same slugs, even though the error types differ", () => {

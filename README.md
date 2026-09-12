@@ -183,8 +183,10 @@ inside the `.tldr` and needs no sidecar:
 self-learn that is `content/topics.yaml`, and `concepts` are concept ids under
 it. `source` is free text: a session id, a note path, whatever prompted the
 diagram. `kc` is the schema version, so a reader can refuse a shape it was not
-written against. Nothing here is required, and a document with none of it still
-draws, exports and loads.
+written against. A reader keeps a version it does not know; a writer refuses
+one, because this build emits the six fields it knows and rewriting a newer
+object would drop what that version added. Nothing here is required, and a
+document with none of it still draws, exports and loads.
 
 Four ways in and one way out:
 
