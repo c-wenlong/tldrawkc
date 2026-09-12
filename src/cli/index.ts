@@ -462,6 +462,17 @@ async function main(): Promise<number> {
   }
 }
 
+// `tldrawkc api | head` closes the pipe while the reference is still being
+// written, and an unhandled EPIPE on stdout crashes with a Node stack trace
+// instead of stopping quietly. Piping into `head`, `grep -m` or `less` is
+// exactly how an agent reads a long listing, so swallow it and let the shell's
+// own convention (the reader went away, so stop) stand.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EPIPE") throw error;
+  });
+}
+
 try {
   process.exitCode = await main();
 } catch (error: unknown) {

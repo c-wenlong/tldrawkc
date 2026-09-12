@@ -124,6 +124,21 @@ function cli(args: string[], stdin?: string): Promise<CliResult> {
   });
 }
 
+/** Run a shell line, so a pipeline can be tested the way a shell runs one. */
+function sh(line: string): Promise<CliResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("/bin/sh", ["-c", line], { cwd: dir, env: { ...process.env } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code: code ?? -1, stdout, stderr }));
+  });
+}
+
 /**
  * The names on the page's `Helpers` interface, read from the source.
  *
@@ -318,6 +333,16 @@ describe("api", () => {
       expect(doc?.examples.length ?? 0, `${name} has no @example`).toBeGreaterThan(0);
       expect(doc?.signature).toContain(name);
     }
+  });
+
+  it("stops quietly when the reader closes the pipe", async () => {
+    // `tldrawkc api | head` is how an agent skims a long listing, and an
+    // unhandled EPIPE turns that into a Node stack trace.
+    const node = JSON.stringify(process.execPath);
+    const entry = JSON.stringify(CLI_ENTRY);
+    const result = await sh(`${node} ${entry} api | head -3`);
+    expect(result.stderr).not.toContain("EPIPE");
+    expect(result.stdout.split("\n").filter((line) => line !== "")).toHaveLength(3);
   });
 
   it("prints a readable block per helper in human mode", async () => {
