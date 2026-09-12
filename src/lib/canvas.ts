@@ -14,7 +14,7 @@
  */
 
 import { isAlreadyExists, readText, writePng, writeText } from "./files.js";
-import { resolveOutputPath, resolveTldrPath, tempShotPath } from "./paths.js";
+import { isSamePath, resolveOutputPath, resolveTldrPath, tempShotPath } from "./paths.js";
 import { EnvironmentError, ExportError, SnippetError, UsageError } from "./errors.js";
 import {
   withCanvas,
@@ -113,6 +113,12 @@ export async function run(options: RunOptions): Promise<RunResult> {
     );
   }
   const source = await readSnippet(options);
+  refuseSelfOverwrite(file, [
+    options.shot === undefined || options.shot === ""
+      ? undefined
+      : resolveOutputPath(options.shot, options.cwd),
+    options.svg === undefined ? undefined : resolveOutputPath(options.svg, options.cwd),
+  ]);
 
   return await withCanvas(
     {
@@ -201,6 +207,7 @@ export async function shot(options: ShotCommandOptions): Promise<ShotCommandResu
   const output = options.output === undefined
     ? tempShotPath(file)
     : resolveOutputPath(options.output, options.cwd);
+  refuseSelfOverwrite(file, [output]);
 
   return await withCanvas(
     {
@@ -339,6 +346,25 @@ export interface ExportResult {
 }
 
 /**
+ * Refuse an export aimed at the document it came from.
+ *
+ * `export diagram.tldr --svg ./diagram.tldr` passes every other check and then
+ * replaces the drawing with a picture of it. The `.tldr` is the only editable
+ * copy, so that is unrecoverable, and one mistyped path is all it takes. Every
+ * verb that writes an export calls this before it launches a browser, so the
+ * answer arrives as a usage error rather than as a half-destroyed file.
+ */
+function refuseSelfOverwrite(file: string, targets: ReadonlyArray<string | undefined>): void {
+  for (const target of targets) {
+    if (target !== undefined && isSamePath(target, file)) {
+      throw new UsageError(
+        `refusing to write an export over the document itself (${file}). Pick another output path.`,
+      );
+    }
+  }
+}
+
+/**
  * Write an SVG, a PNG, or both, from a document that is already finished.
  *
  * Nothing is executed and nothing is saved, so the only thing that can fail is
@@ -362,6 +388,7 @@ export async function exportCanvas(options: ExportOptions): Promise<ExportResult
   const pngTarget = options.png === undefined
     ? null
     : resolveOutputPath(options.png, options.cwd);
+  refuseSelfOverwrite(file, [svgTarget ?? undefined, pngTarget ?? undefined]);
 
   return await withCanvas(
     {
@@ -494,6 +521,9 @@ export async function fromMermaid(options: FromMermaidOptions): Promise<FromMerm
   if (options.source.trim() === "") {
     throw new UsageError("the mermaid source is empty.");
   }
+  refuseSelfOverwrite(file, [
+    options.shot === undefined ? undefined : resolveOutputPath(options.shot, options.cwd),
+  ]);
 
   return await withCanvas(
     {
@@ -519,7 +549,20 @@ export async function fromMermaid(options: FromMermaidOptions): Promise<FromMerm
       const imported = readMermaidResult(exec.result);
 
       const json = await saveDocument(canvas);
-      await writeText(file, json);
+      // Exclusive unless appending, for the same reason `new` is: the early
+      // existence check answers fast, and only the write itself can refuse a
+      // file that appeared while the page was busy. Two imports of the same
+      // name would otherwise both pass the check and silently overwrite.
+      try {
+        await writeText(file, json, options.append ? {} : { exclusive: true });
+      } catch (error) {
+        if (isAlreadyExists(error)) {
+          throw new UsageError(
+            `${file} was created while the import was running. Pass --append to add to it, or pick another name.`,
+          );
+        }
+        throw error;
+      }
 
       let shot: string | null = null;
       if (options.shot !== undefined) {

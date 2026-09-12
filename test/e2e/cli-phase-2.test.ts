@@ -306,6 +306,17 @@ describe("export", () => {
     }
   });
 
+  it("refuses to write over the document it is exporting", async () => {
+    // `--svg ./diagram.tldr` would replace the only editable copy of the
+    // drawing with a picture of it, and nothing gets that back.
+    await drawFourBoxes();
+    const before = await fs.readFile(file, "utf8");
+    const result = await cli(["export", "diagram.tldr", "--svg", "./diagram.tldr"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("over the document itself");
+    expect(await fs.readFile(file, "utf8")).toBe(before);
+  });
+
   it("refuses to run with neither --svg nor --png", async () => {
     await drawFourBoxes();
     const result = await cli(["export", "diagram.tldr"]);

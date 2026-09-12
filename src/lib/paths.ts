@@ -126,6 +126,19 @@ export function resolveOutputPath(input: string, cwd: string = process.cwd()): s
 }
 
 /**
+ * Do two already-resolved paths name the same file?
+ *
+ * Used to refuse an export that would land on the document it came from:
+ * `export diagram.tldr --svg ./diagram.tldr` otherwise replaces the only
+ * editable copy of the drawing with a picture of it, and nothing gets that
+ * back. Comparison is exact, so this catches the typo it exists for and not a
+ * symlink or a case-folded duplicate; it is a guard rail, not a lock.
+ */
+export function isSamePath(a: string, b: string): boolean {
+  return path.resolve(a) === path.resolve(b);
+}
+
+/**
  * The throwaway file `doctor`'s write-access check creates.
  *
  * In the working directory rather than the system temp directory, because the
