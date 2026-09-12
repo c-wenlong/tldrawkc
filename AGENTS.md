@@ -282,10 +282,18 @@ Collected as they are found, so they are not rediscovered.
   as the helper default, so `connect` sets it on every arrow rather than
   relying on the shape default. Elbow routing reads `props.elbowMidPoint`
   (0..1); `props.bend` is arc only, and the two are separate fields.
-- **A snippet's stack line numbers are two higher than the source.** The
-  `AsyncFunction` constructor prepends a header, so line 4 of a snippet
-  reports as `<anonymous>:6`. The offset was measured, not guessed, and it is
-  constant. Subtract 2 before showing a caller which line threw.
+- **A snippet's stack line numbers are two higher than the source, and the
+  bridge now corrects them.** The `AsyncFunction` constructor prepends a
+  header, so line 4 of a snippet reports at line 6. The offset was measured,
+  not guessed, and it is constant. `helpers/stack.ts` subtracts it in `exec`'s
+  catch, before the error crosses the bridge, and adds a `snippet.js:4:3  <the
+  line>` pointer above the frames. Two things make that safe rather than a
+  blind search and replace. The snippet is compiled with a trailing
+  `//# sourceURL=snippet.js`, appended so it cannot shift the numbers it exists
+  to fix, which is what lets a snippet frame be told apart from the
+  `<anonymous>` frames playwright's own injected script contributes to the same
+  stack. And a frame that lands on line 1 or 2, inside the generated header, is
+  left alone rather than renumbered to zero.
 - **`createShapeId(id)` is literally `` `shape:${id}` ``**, with no check for a
   prefix that is already there. Feeding it a real id gives `shape:shape:x`,
   which is why `helpers/keys.ts` strips the prefix first and every helper takes
