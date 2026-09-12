@@ -103,6 +103,24 @@ Environment
 Exit codes
   0 done   1 usage or environment   2 snippet threw   3 lints remain   4 export failed`;
 
+/**
+ * One line of untrusted text, safe to write to a terminal.
+ *
+ * A declined mermaid statement is echoed back so the author can see what was
+ * dropped, and a `.mmd` is a file the tool did not write. A line carrying an
+ * escape sequence would otherwise clear the screen or repaint what is already
+ * there, so every C0 and C1 control character becomes its escaped form. The
+ * `--json` output is untouched: a consumer parsing JSON wants the bytes that
+ * were in the file.
+ */
+function printable(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, (character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return `\\x${code.toString(16).padStart(2, "0")}`;
+  });
+}
+
 function out(line: string): void {
   process.stdout.write(`${line}\n`);
 }
@@ -392,7 +410,7 @@ async function runFromMermaid(
     // prints exactly one object on stdout. Never dropped: a diagram that
     // silently lost three statements looks finished and is not.
     for (const line of result.unsupported) {
-      process.stderr.write(`unsupported: ${line}\n`);
+      process.stderr.write(`unsupported: ${printable(line)}\n`);
     }
   }
   return result.exitCode;
