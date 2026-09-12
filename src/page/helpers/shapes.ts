@@ -265,7 +265,14 @@ export function makeNote(
 ): TLShapeId {
   const id = toShapeId(key);
   const existing = editor.getShape(id);
-  const position = resolvePosition(editor, opts, existing !== undefined, `note "${String(key)}"`);
+  const resolved = resolvePosition(editor, opts, existing !== undefined, `note "${String(key)}"`);
+  // Page coordinates in, parent space out, the same as `box` and `text`. A
+  // note inside a frame at (400, 300) was landing 400 across and 300 down from
+  // where the caller asked for it.
+  const position =
+    resolved !== undefined && opts.parent !== undefined
+      ? toParentSpace(editor, opts.parent, resolved)
+      : resolved;
 
   const props = {
     color: opts.color ?? "yellow",
@@ -300,7 +307,11 @@ export function makeNote(
  */
 export function removeShapes(editor: Editor, keys: ShapeKey | readonly ShapeKey[]): number {
   const list: readonly ShapeKey[] = typeof keys === "string" ? [keys] : keys;
-  const ids = list.map((key) => toShapeId(key)).filter((id) => editor.getShape(id) !== undefined);
+  // Deduplicated, because `'a'` and `'shape:a'` are the same shape and the
+  // return value promises how many shapes actually went.
+  const ids = [...new Set(list.map((key) => toShapeId(key)))].filter(
+    (id) => editor.getShape(id) !== undefined,
+  );
   if (ids.length > 0) editor.deleteShapes(ids);
   return ids.length;
 }
