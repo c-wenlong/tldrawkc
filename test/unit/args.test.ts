@@ -20,9 +20,27 @@ describe("dispatch", () => {
     expect(result.ok && result.parsed.command).toBe("help");
   });
 
-  it("keeps the remaining positionals in order", () => {
-    const result = parse(["doctor", "one", "two"]);
-    expect(result.ok && result.parsed.args).toEqual(["one", "two"]);
+  it("keeps the file positional", () => {
+    const result = parse(["shot", "diagram.tldr"]);
+    expect(result.ok && result.parsed.args).toEqual(["diagram.tldr"]);
+  });
+
+  it("refuses a stray positional on a command that takes no file", () => {
+    const result = parse(["doctor", "one"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain("takes no file");
+  });
+
+  it("refuses a second positional on a command that takes one file", () => {
+    const result = parse(["run", "a.tldr", "b.tldr"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain("takes one file");
+  });
+
+  it("refuses a file-taking command with no file", () => {
+    const result = parse(["run"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain("<file.tldr>");
   });
 
   it("rejects an unknown command", () => {
@@ -32,9 +50,9 @@ describe("dispatch", () => {
   });
 
   it("names the phase for a command that is specified but not built", () => {
-    const result = parse(["run", "a.tldr"]);
+    const result = parse(["inspect", "a.tldr"]);
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.error).toContain("phase 1");
+    expect(!result.ok && result.error).toContain("phase 2");
   });
 
   it("rejects an unknown option", () => {
@@ -130,5 +148,81 @@ describe("environment defaults", () => {
 describe("exit codes", () => {
   it("matches the table in CLI.md", () => {
     expect(EXIT).toEqual({ ok: 0, usage: 1, snippet: 2, lints: 3, export: 4 });
+  });
+});
+
+describe("command options", () => {
+  it("defaults every command option", () => {
+    const result = parse(["run", "a.tldr", "--eval", "1"]);
+    expect(result.ok && result.parsed.options).toEqual({
+      code: undefined,
+      evalSource: "1",
+      shot: undefined,
+      svg: undefined,
+      create: false,
+      save: true,
+      output: undefined,
+      ids: undefined,
+      from: undefined,
+    });
+  });
+
+  it("reads every run flag", () => {
+    const result = parse([
+      "run",
+      "a.tldr",
+      "--code",
+      "/tmp/snippet.js",
+      "--shot",
+      "out.png",
+      "--svg",
+      "out.svg",
+      "--create",
+      "--no-save",
+    ]);
+    expect(result.ok && result.parsed.options.code).toBe("/tmp/snippet.js");
+    expect(result.ok && result.parsed.options.shot).toBe("out.png");
+    expect(result.ok && result.parsed.options.svg).toBe("out.svg");
+    expect(result.ok && result.parsed.options.create).toBe(true);
+    expect(result.ok && result.parsed.options.save).toBe(false);
+  });
+
+  it("takes - as the --code value, for stdin", () => {
+    const result = parse(["run", "a.tldr", "--code", "-"]);
+    expect(result.ok && result.parsed.options.code).toBe("-");
+  });
+
+  it("refuses --code together with --eval", () => {
+    const result = parse(["run", "a.tldr", "--code", "x.js", "--eval", "1"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain("mutually exclusive");
+  });
+
+  it("reads -o and --ids for shot", () => {
+    const result = parse(["shot", "a.tldr", "-o", "out.png", "--ids", "shape:a, shape:b ,,"]);
+    expect(result.ok && result.parsed.options.output).toBe("out.png");
+    expect(result.ok && result.parsed.options.ids).toEqual(["shape:a", "shape:b"]);
+  });
+
+  it("reads --from for new", () => {
+    const result = parse(["new", "a.tldr", "--from", "b.tldr"]);
+    expect(result.ok && result.parsed.options.from).toBe("b.tldr");
+  });
+
+  it("refuses a flag that belongs to another command", () => {
+    const result = parse(["shot", "a.tldr", "--create"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('--create is not an option of "shot"');
+  });
+
+  it("refuses a run flag on doctor", () => {
+    const result = parse(["doctor", "--shot", "out.png"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('not an option of "doctor"');
+  });
+
+  it("accepts every global on every command", () => {
+    expect(parse(["new", "a.tldr", "--json", "--quiet", "--headed"]).ok).toBe(true);
+    expect(parse(["shot", "a.tldr", "--padding", "4", "--page", "Page 2"]).ok).toBe(true);
   });
 });

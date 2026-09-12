@@ -6,28 +6,71 @@
  * data: no printing, no `process.exit`. That is what keeps a future MCP entry
  * (DECISIONS.md D6) a thin wrapper rather than a rewrite.
  *
- * Phase 0 exposes the environment half. The drawing verbs (`run`, `shot`,
- * `inspect`, `export`, `fromMermaid`, `serve`) land in `canvas.ts` in later
- * phases and are re-exported from here when they do.
+ * Phase 1 adds the drawing verbs. `inspect`, `export`, `fromMermaid` and
+ * `serve` land in later phases and are re-exported from here when they do.
  */
 
 export {
+  BRIDGE_TIMEOUT_MS,
   ChromiumNotFoundError,
+  EXEC_TIMEOUT_MS,
   installedBrowserPaths,
+  isOffHost,
+  openCanvasPage,
   resolveChromium,
+  VIEWPORT,
+  withCanvas,
+  type Bounds,
+  type BridgeMethod,
+  type CanvasHandle,
   type ChromiumSource,
+  type ExecResult,
+  type FailedRequest,
+  type Lint,
+  type LoadResult,
+  type OpenCanvasOptions,
+  type PingResult,
   type ResolveChromiumOptions,
   type ResolvedChromium,
+  type SetPageResult,
+  type ShotOptions,
+  type ShotResult,
+  type SvgOptions,
+  type SvgResult,
+  type WithCanvasOptions,
 } from "./browser.js";
 
 export {
+  newDocument,
+  run,
+  shot,
+  type NewDocumentOptions,
+  type NewDocumentResult,
+  type RunOptions,
+  type RunResult,
+  type ShotCommandOptions,
+  type ShotCommandResult,
+} from "./canvas.js";
+
+export {
   doctor,
+  isFontUrl,
   MINIMUM_NODE_MAJOR,
   type CheckStatus,
   type DoctorCheck,
   type DoctorOptions,
   type DoctorReport,
 } from "./doctor.js";
+
+export {
+  EXIT_CODES,
+  EnvironmentError,
+  ExportError,
+  isTldrawkcError,
+  SnippetError,
+  TldrawkcError,
+  UsageError,
+} from "./errors.js";
 
 export {
   modifiedAt,
@@ -41,11 +84,23 @@ export {
 export {
   CLI_ENTRY,
   DIST_DIR,
+  doctorProbePath,
   PACKAGE_ROOT,
   PAGE_DIST_DIR,
   PAGE_INDEX_HTML,
   PAGE_SRC_DIR,
+  resolveOutputPath,
   resolveTldrPath,
   tempShotPath,
   tempSiblingPath,
 } from "./paths.js";
+
+export {
+  contentTypeFor,
+  CONTENT_TYPES,
+  FALLBACK_CONTENT_TYPE,
+  resolveStaticPath,
+  startPageServer,
+  type PageServer,
+  type StartPageServerOptions,
+} from "./server.js";
