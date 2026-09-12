@@ -261,6 +261,13 @@ Collected as they are found, so they are not rediscovered.
   `parsed.value.getStoreSnapshot("document")`. Pass the scope explicitly:
   the argument defaults to `document` today, and `"all"` would drag session
   records into a snapshot meant only for `loadSnapshot`.
+- **`toImage` reports its size in page units, not pixels.** The `width` and
+  `height` on the result are the framed region before the pixel ratio, so at
+  the default ratio of 2 they are half the PNG. Multiplying them back does not
+  reproduce the file either: 1288.5024 units at ratio 2 came back as a
+  2576-pixel PNG, not the 2577 the arithmetic predicts. The bridge reads the
+  size out of the PNG's own IHDR chunk instead, because CLI.md promises pixels
+  and the file is the only thing a caller can check against.
 - **`toImage`'s `padding` defaults to `'auto'`, not to a number.** `'auto'`
   trims to visual content bounds and captures overflow like thick strokes and
   arrowheads; a number is fixed padding with no trimming, and anything beyond

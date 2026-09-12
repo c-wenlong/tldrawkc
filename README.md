@@ -38,6 +38,40 @@ Every arrow is bound at both ends, so moving a box drags its arrows with it.
 The labels are tldraw's own Shantell Sans, bundled into the page so nothing
 is fetched at render time.
 
+## From mermaid
+
+Most diagrams that already exist are mermaid, so `from-mermaid` lifts one onto
+the canvas and leaves it editable. This is `test/fixtures/mermaid/subgraph-8-9.mmd`,
+8 nodes, 9 edges and a subgraph, run through the command and screenshotted by
+the tool:
+
+```
+flowchart TD
+  agent[agent cli] --> cli[tldrawkc]
+  cli --> browser[chromium]
+  browser --> page[tldraw page]
+  subgraph render [rendering]
+    page --> shapes[shapes and arrows]
+    shapes --> png[png export]
+    shapes --> svg[svg export]
+  end
+  png --> look{Looks right?}
+  svg --> look
+  look -->|no| cli
+```
+
+```bash
+tldrawkc from-mermaid eight.tldr --source subgraph-8-9.mmd --shot eight.png
+```
+
+![A top-down flowchart on a tldraw canvas: agent cli to tldrawkc to chromium to tldraw page, then a labelled rendering container holding shapes and arrows above png export and svg export, both feeding a Looks right? diamond, and a curved arrow labelled no running back up to tldrawkc](docs/example-mermaid.png)
+
+Every edge is a bound arrow, the subgraph is a labelled container behind its
+shapes, and the back edge is an arc routed around the column rather than a
+straight line through six boxes. Anything the parser cannot read is listed
+under `unsupported` instead of being dropped: mermaid's `classDef` and `class`
+styling lines are the usual ones.
+
 ## The loop
 
 One Node program and one browser page. Every command launches headless
