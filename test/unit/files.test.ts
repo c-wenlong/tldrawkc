@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  isAlreadyExists,
   modifiedAt,
   newestMtime,
   readText,
@@ -107,5 +108,29 @@ describe("modifiedAt and newestMtime", () => {
     await writeText(newer, "b");
     await fs.utimes(newer, new Date(2_000_000), new Date(2_000_000));
     expect(await newestMtime(dir)).toBe(await modifiedAt(newer));
+  });
+});
+
+describe("an exclusive write", () => {
+  it("refuses to replace a file that appeared after the caller checked", async () => {
+    const target = path.join(dir, "fresh.tldr");
+    // The shape of the race `new` has: the existence check passes, a browser
+    // launch happens, and by publication time someone else got there.
+    await writeText(target, "theirs");
+
+    let raised: unknown;
+    await writeText(target, "ours", { exclusive: true }).catch((error: unknown) => {
+      raised = error;
+    });
+
+    expect(isAlreadyExists(raised)).toBe(true);
+    expect(await readText(target)).toBe("theirs");
+  });
+
+  it("writes normally when nothing is there, and leaves no temp file behind", async () => {
+    const target = path.join(dir, "fresh.tldr");
+    expect(await writeText(target, "ours", { exclusive: true })).toBe(target);
+    expect(await readText(target)).toBe("ours");
+    expect(await fs.readdir(dir)).toEqual(["fresh.tldr"]);
   });
 });

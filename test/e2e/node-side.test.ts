@@ -1,0 +1,251 @@
+/**
+ * The Node half of every verb, against a stand-in bridge.
+ *
+ * A real browser, a real server, real files, and a page that answers the
+ * bridge contract without tldraw (`fixtures/stand-in-page/`). What is under
+ * test here is everything Node decides: the order of load, exec, save and
+ * export; the exit code each failure carries; that a snippet which throws
+ * leaves the document byte for byte as it was; and that a screenshot with no
+ * `-o` lands in the system temp directory rather than next to the source.
+ *
+ * None of that needs the editor, and pinning it separately means a failure in
+ * `cli.test.ts` next door points at the page rather than at both halves.
+ */
+
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { newDocument, run, shot } from "../../src/lib/canvas.js";
+import { EnvironmentError, ExportError, SnippetError, UsageError } from "../../src/lib/errors.js";
+
+/** The page served to every test in this file. */
+const STAND_IN_PAGE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "fixtures",
+  "stand-in-page",
+);
+
+/** The snippet from the example at the end of HELPERS.md, trimmed to three boxes. */
+const THREE_BOXES = `
+helpers.box('agent', 'agent cli', { x: 60, y: 60, w: 170, h: 64 })
+helpers.box('page', 'headless page', { after: 'agent', gap: 80, w: 190, h: 64 })
+helpers.box('png', 'screenshot png', { below: 'page', gap: 90, w: 190, h: 64 })
+helpers.connect('agent', 'page', { label: 'exec' })
+helpers.connect('page', 'png', { label: 'toImage' })
+return { boxes: 3, arrows: 2 }
+`;
+
+let dir: string;
+let file: string;
+
+beforeEach(async () => {
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), "tldrawkc-e2e-"));
+  file = path.join(dir, "diagram.tldr");
+});
+
+afterEach(async () => {
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+function options(overrides: Partial<Parameters<typeof run>[0]> = {}) {
+  return {
+    file,
+    create: true,
+    save: true,
+    allowLints: false,
+    padding: 32,
+    pixelRatio: 2,
+    timeoutMs: 30_000,
+    cwd: dir,
+    pageRoot: STAND_IN_PAGE,
+    ...overrides,
+  };
+}
+
+describe("run", () => {
+  it("draws, saves and reports what it drew", async () => {
+    const result = await run(options({ evalSource: THREE_BOXES }));
+
+    expect(result.exitCode).toBe(0);
+    expect(result.shapeCount).toBe(5);
+    expect(result.lints).toEqual([]);
+    expect(result.result).toEqual({ boxes: 3, arrows: 2 });
+    expect(result.saved).toBe(true);
+    expect(result.ms).toBeGreaterThan(0);
+
+    const document = JSON.parse(await fs.readFile(file, "utf8")) as { records: unknown[] };
+    expect(Array.isArray(document.records)).toBe(true);
+    expect(document.records).toHaveLength(5);
+  });
+
+  it("loads what a previous run saved, so two snippets compose", async () => {
+    await run(options({ evalSource: THREE_BOXES }));
+    const second = await run(
+      options({ evalSource: "helpers.box('extra', 'one more', { x: 400, y: 400 })" }),
+    );
+    expect(second.shapeCount).toBe(6);
+  });
+
+  it("starts from empty only when --create says so", async () => {
+    await expect(run(options({ create: false, evalSource: "1" }))).rejects.toBeInstanceOf(
+      UsageError,
+    );
+  });
+
+  it("writes a PNG with --shot and leaves it where asked", async () => {
+    const out = path.join(dir, "out.png");
+    const result = await run(options({ evalSource: THREE_BOXES, shot: "out.png" }));
+    expect(result.shot).toBe(out);
+    const bytes = await fs.readFile(out);
+    // A PNG, not a base64 string that was written verbatim.
+    expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(bytes.byteLength).toBeGreaterThan(1000);
+  });
+
+  it("exports but does not write the document with --no-save", async () => {
+    const result = await run(options({ evalSource: THREE_BOXES, save: false, shot: "out.png" }));
+    expect(result.saved).toBe(false);
+    expect(result.shot).not.toBeNull();
+    await expect(fs.readFile(file)).rejects.toThrow();
+  });
+
+  it("leaves the document untouched when the snippet throws", async () => {
+    await run(options({ evalSource: THREE_BOXES }));
+    const before = await fs.readFile(file);
+
+    const error = await run(
+      options({ evalSource: "helpers.box('x', 'x', { x: 0, y: 0 }); throw new Error('boom')" }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(SnippetError);
+    expect((error as SnippetError).exitCode).toBe(2);
+    expect((error as SnippetError).message).toContain("boom");
+    // Byte for byte, not "still parses": a partial write is the failure mode
+    // the atomic write exists to prevent.
+    expect(await fs.readFile(file)).toEqual(before);
+  });
+
+  it("saves and reports exit 3 when lints remain", async () => {
+    const loose = `
+      helpers.box('a', 'alpha', { x: 0, y: 0 })
+      editor.createShape({ id: tldraw.createShapeId('loose'), type: 'arrow', x: 300, y: 300 })
+    `;
+    const result = await run(options({ evalSource: loose }));
+
+    expect(result.exitCode).toBe(3);
+    expect(result.lints.map((lint) => lint.rule)).toContain("friendless-arrow");
+    // The work is real, so it is saved. The non-zero code is what stops an
+    // agent calling the diagram finished.
+    expect(result.saved).toBe(true);
+    expect(JSON.parse(await fs.readFile(file, "utf8"))).toHaveProperty("records");
+  });
+
+  it("turns exit 3 into 0 with --allow-lints, without changing the lint list", async () => {
+    const loose = "editor.createShape({ id: tldraw.createShapeId('loose'), type: 'arrow', x: 0, y: 0 })";
+    const result = await run(options({ evalSource: loose, allowLints: true }));
+    expect(result.exitCode).toBe(0);
+    expect(result.lints.length).toBeGreaterThan(0);
+  });
+
+  it("refuses --svg against a page with no svg() yet", async () => {
+    const error = await run(
+      options({ evalSource: THREE_BOXES, svg: "out.svg" }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UsageError);
+    expect((error as UsageError).message).toContain("phase 2");
+    // Refused before the snippet ran, so nothing was written.
+    await expect(fs.readFile(file)).rejects.toThrow();
+  });
+
+  it("gives up on a snippet that never finishes", async () => {
+    const error = await run(
+      options({ evalSource: "while (true) { /* spin */ }", timeoutMs: 750 }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(EnvironmentError);
+    expect((error as EnvironmentError).exitCode).toBe(1);
+    expect((error as EnvironmentError).message).toContain("750");
+    await expect(fs.readFile(file)).rejects.toThrow();
+  });
+
+  it("refuses an unknown --page by name", async () => {
+    const error = await run(
+      options({ evalSource: "1", page: "Nowhere" }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UsageError);
+    expect((error as UsageError).message).toContain("Nowhere");
+  });
+
+  it("reports an export failure as its own code, after the save", async () => {
+    // A directory where the PNG should go: the save succeeds, the export
+    // cannot. That is exactly the split exit 4 exists to describe.
+    await fs.mkdir(path.join(dir, "blocked.png"));
+    const error = await run(
+      options({ evalSource: THREE_BOXES, shot: "blocked.png" }),
+    ).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ExportError);
+    expect((error as ExportError).exitCode).toBe(4);
+    // The document is safe, which is the whole point of the separate code.
+    expect(JSON.parse(await fs.readFile(file, "utf8"))).toHaveProperty("records");
+  });
+});
+
+describe("shot", () => {
+  it("writes to the system temp directory when nothing was asked for", async () => {
+    await run(options({ evalSource: THREE_BOXES }));
+    const result = await shot({
+      file,
+      padding: 32,
+      pixelRatio: 2,
+      cwd: dir,
+      pageRoot: STAND_IN_PAGE,
+    });
+
+    expect(path.dirname(result.shot)).toBe(path.resolve(os.tmpdir()));
+    expect(path.basename(result.shot)).toMatch(/^tldrawkc-diagram-.*\.png$/);
+    expect(result.width).toBeGreaterThan(0);
+    try {
+      expect((await fs.stat(result.shot)).size).toBeGreaterThan(1000);
+    } finally {
+      await fs.rm(result.shot, { force: true });
+    }
+  });
+
+  it("writes where -o says", async () => {
+    await run(options({ evalSource: THREE_BOXES }));
+    const result = await shot({
+      file,
+      output: "here.png",
+      padding: 32,
+      pixelRatio: 2,
+      cwd: dir,
+      pageRoot: STAND_IN_PAGE,
+    });
+    expect(result.shot).toBe(path.join(dir, "here.png"));
+  });
+});
+
+describe("new", () => {
+  it("writes a document the next run can load", async () => {
+    const created = await newDocument({ file, cwd: dir, pageRoot: STAND_IN_PAGE });
+    expect(created.file).toBe(file);
+
+    const document = JSON.parse(await fs.readFile(file, "utf8")) as { records: unknown[] };
+    expect(document.records).toEqual([]);
+
+    const after = await run(options({ create: false, evalSource: THREE_BOXES }));
+    expect(after.shapeCount).toBe(5);
+  });
+
+  it("copies a starting point with --from", async () => {
+    await run(options({ evalSource: THREE_BOXES }));
+    const copy = path.join(dir, "copy.tldr");
+    await newDocument({ file: copy, from: file, cwd: dir, pageRoot: STAND_IN_PAGE });
+
+    const document = JSON.parse(await fs.readFile(copy, "utf8")) as { records: unknown[] };
+    expect(document.records).toHaveLength(5);
+  });
+});

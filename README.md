@@ -5,9 +5,39 @@ line, take a picture of it, look, and fix it. Built for coding agents, which
 write code well and read images well but cannot see what they just drew unless
 something renders it.
 
-**Status: phase 0.** The package builds, tests and runs `doctor`. The drawing
-verbs are specified and not written yet. `tldrawkc help` lists which phase
-brings each one.
+**Status: phase 1.** `new`, `run`, `shot` and `doctor` work. Reading the canvas
+(`inspect`), exporting SVG (`export`), importing mermaid (`from-mermaid`) and
+the human view (`serve`) are specified and not written yet; `tldrawkc help`
+lists which phase brings each one.
+
+## What it draws
+
+The example snippet from the helper reference, run end to end and screenshotted
+by the tool itself:
+
+![Four boxes joined by bound arrows: agent cli to headless page labelled exec, headless page to screenshot png labelled toImage, screenshot png back to agent cli labelled read, and a dashed arrow from headless page to browser tab labelled mirror](docs/example-loop.png)
+
+```js
+helpers.box('agent', 'agent cli', { x: 60, y: 60, w: 170, h: 64 })
+helpers.box('page', 'headless page', { after: 'agent', gap: 120, w: 190, h: 64 })
+helpers.box('png', 'screenshot png', { below: 'page', gap: 90, w: 190, h: 64 })
+helpers.box('tab', 'browser tab', { after: 'page', gap: 140, w: 170, h: 64 })
+
+helpers.connect('agent', 'page', { label: 'exec' })
+helpers.connect('page', 'png', { label: 'toImage' })
+helpers.connect('png', 'agent', { label: 'read', start: 'left', end: 'bottom' })
+helpers.connect('page', 'tab', { label: 'mirror', dash: 'dashed' })
+
+return helpers.getLints()
+```
+
+```bash
+tldrawkc run loop.tldr --code loop.js --shot loop.png --create
+```
+
+Every arrow is bound at both ends, so moving a box drags its arrows with it.
+The labels are tldraw's own Shantell Sans, bundled into the page so nothing
+is fetched at render time.
 
 ## The loop
 
@@ -46,6 +76,44 @@ git submodule update --init tldrawkc
 (cd tldrawkc && npm ci && npm run build)
 npm run canvas -- doctor
 ```
+
+## Commands
+
+```bash
+tldrawkc new diagram.tldr                 # an empty document, refuses to overwrite
+tldrawkc run diagram.tldr --code draw.js --create --shot out.png
+tldrawkc shot diagram.tldr                # a PNG in the temp directory, path printed
+tldrawkc doctor                           # node, the bundle, Chromium, the page, fonts, write access
+```
+
+`run` is the verb that matters. It loads the file, runs your snippet with
+`editor`, `helpers` and `tldraw` in scope, saves, and then exports. `--code -`
+reads the snippet from stdin, so an agent can heredoc one without leaving a
+file behind:
+
+```bash
+tldrawkc run loop.tldr --create --shot /tmp/loop.png --code - <<'JS'
+helpers.box('agent', 'agent cli', { x: 60, y: 60, w: 170, h: 64 })
+helpers.box('page', 'headless page', { after: 'agent', gap: 120 })
+helpers.connect('agent', 'page', { label: 'exec' })
+return helpers.getLints()
+JS
+```
+
+Add `--json` to any command for one machine-readable object on stdout.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Done, no lints |
+| 1 | Bad arguments, a missing file, or the environment (no Chromium, the page never answered, the snippet ran past `--timeout`) |
+| 2 | The snippet threw. The document is untouched. |
+| 3 | Saved, but lints remain. Read them and run again, or pass `--allow-lints`. |
+| 4 | The export failed after a successful save. The `.tldr` is safe; run `shot` again. |
+
+3 is deliberate. The work is real, so it is written, and the non-zero code is
+what stops an agent calling a diagram finished without looking at it.
 
 ## Design
 
