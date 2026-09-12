@@ -40,6 +40,31 @@ export const PAGE_SRC_DIR = path.join(PACKAGE_ROOT, "src", "page");
 /** The compiled CLI entry point, the thing `bin/tldrawkc` executes. */
 export const CLI_ENTRY = path.join(DIST_DIR, "cli", "index.js");
 
+/** Where the helpers the page exposes to a snippet live. */
+export const HELPERS_SRC_DIR = path.join(PAGE_SRC_DIR, "helpers");
+
+/**
+ * The generated helper reference. `npm run build:api` writes it, `tldrawkc
+ * api` prints it.
+ *
+ * Beside `dist/cli` and `dist/lib` rather than inside either, because it is
+ * neither: it is data about `src/page`, produced by reading that directory as
+ * text at build time (layering rule 1 forbids importing it).
+ */
+export const API_JSON = path.join(DIST_DIR, "api.json");
+
+/**
+ * The files `build:api` reads.
+ *
+ * Just the helpers bag's own module. Every other file under `helpers/` carries
+ * blocks on internal functions (`makeBox`, `toShapeId`, `connectionKey`), and
+ * a reference that lists those has stopped describing what a snippet can call.
+ * The bag is assembled in `index.ts`, so `index.ts` is the surface.
+ */
+export const API_SOURCE_FILES: readonly string[] = [
+  path.join(HELPERS_SRC_DIR, "index.ts"),
+];
+
 /**
  * Resolve a user-supplied `.tldr` path against a working directory.
  *
