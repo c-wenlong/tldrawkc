@@ -1,0 +1,8 @@
+%% A working graph, one broken line, and two unsupported statements.
+flowchart TD
+  ok[Fine] --> also[Also fine]
+  also ==> thick[Thick edge]
+  this line is not mermaid at all
+  classDef highlight fill:#f9f,stroke:#333
+  click ok "https://example.com" "a tooltip"
+  thick --> done[Done]

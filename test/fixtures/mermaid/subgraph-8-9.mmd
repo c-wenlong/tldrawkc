@@ -1,0 +1,13 @@
+%% The roadmap e2e fixture: 8 nodes, 9 edges, one subgraph.
+flowchart TD
+  agent[agent cli] --> cli[tldrawkc]
+  cli --> browser[chromium]
+  browser --> page[tldraw page]
+  subgraph render [rendering]
+    page --> shapes[shapes and arrows]
+    shapes --> png[png export]
+    shapes --> svg[svg export]
+  end
+  png --> look{Looks right?}
+  svg --> look
+  look -->|no| cli

@@ -1,0 +1,8 @@
+%% One of each node shape this importer understands.
+flowchart LR
+  rect[Plain rectangle] --> round(Rounded corners)
+  round --> dia{Branch here?}
+  dia --> oval([Capsule shaped label])
+  oval --> ell((Ellipse shaped label))
+  ell --> quoted["A label, with a comma"]
+  quoted --> bare
