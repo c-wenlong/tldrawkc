@@ -25,9 +25,11 @@ import {
 
 import { clampPixelRatio, unionRects, type Rect } from "./helpers/geometry.js";
 import { toShapeId } from "./helpers/ids.js";
-import { collectLintRecords, plainTextOf } from "./helpers/read.js";
-import { runLints, type Lint } from "./helpers/lints.js";
+import { describeEditor, lintPage, type InspectResult } from "./helpers/read.js";
+import type { Lint } from "./helpers/lints.js";
 import { createHelpers, type Helpers } from "./helpers/index.js";
+
+export type { InspectShape, InspectBinding, InspectResult } from "./helpers/read.js";
 
 /** Export padding, in page units, when the caller does not say. */
 export const DEFAULT_PADDING = 32;
@@ -93,40 +95,6 @@ export interface SvgResult {
   svg: string;
   width: number;
   height: number;
-}
-
-/** One shape as `inspect` reports it. */
-export interface InspectShape {
-  id: string;
-  type: string;
-  /** Present only on geo shapes. */
-  geo?: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  /** The label's plain text, or `null` when the shape has none. */
-  text: string | null;
-  parentId: string;
-}
-
-/** One arrow binding pair as `inspect` reports it. */
-export interface InspectBinding {
-  arrow: string;
-  from: string | null;
-  to: string | null;
-  fromAnchor: { x: number; y: number } | null;
-  toAnchor: { x: number; y: number } | null;
-}
-
-/** The "read the canvas" structure, defined by the table in ARCHITECTURE.md. */
-export interface InspectResult {
-  pages: string[];
-  page: string;
-  bounds: Rect | null;
-  shapes: InspectShape[];
-  bindings: InspectBinding[];
-  lints: Lint[];
 }
 
 export interface Bridge {
@@ -251,7 +219,11 @@ function blankShot(background: boolean): ShotResult {
  * time `window.__tldrawkc` exists there is a live `Editor` behind it.
  */
 export function installBridge(editor: Editor): Bridge {
-  const helpers: Helpers = createHelpers(editor);
+  const handle = createHelpers(editor);
+  const helpers: Helpers = handle.helpers;
+  const beginExec = (): void => {
+    handle.beginExec();
+  };
 
   // A snapshot of the document as it mounts: one page, no shapes, this
   // schema. `load(null)` replays it, which is the only reset that provably
@@ -262,10 +234,7 @@ export function installBridge(editor: Editor): Bridge {
   const pageNames = (): string[] => editor.getPages().map((page) => page.name);
   const shapeCount = (): number => editor.getCurrentPageShapes().length;
 
-  const lints = (): Lint[] => {
-    const { shapes, bindings } = collectLintRecords(editor);
-    return runLints(shapes, bindings);
-  };
+  const lints = (): Lint[] => lintPage(editor);
 
   const framed = (ids: TLShapeId[]): Rect | null => unionRects(shapeRects(editor, ids));
 
@@ -305,6 +274,9 @@ export function installBridge(editor: Editor): Bridge {
 
     exec: async (source) => {
       const mark = editor.markHistoryStoppingPoint("exec");
+      // Before anything runs, so `helpers.clear()` can tell a document this
+      // snippet drew from one it was handed.
+      beginExec();
       try {
         const run = new AsyncFunction("editor", "helpers", "tldraw", source);
         const result = await run(editor, helpers, tldrawModule);
@@ -366,46 +338,7 @@ export function installBridge(editor: Editor): Bridge {
       return { svg: result.svg, width: result.width, height: result.height };
     },
 
-    inspect: () => {
-      const shapes = editor.getCurrentPageShapes();
-      const bindings: InspectBinding[] = [];
-      for (const shape of shapes) {
-        if (shape.type !== "arrow") continue;
-        const arrowBindings = editor.getBindingsFromShape(shape.id, "arrow");
-        const start = arrowBindings.find((b) => b.props.terminal === "start");
-        const end = arrowBindings.find((b) => b.props.terminal === "end");
-        bindings.push({
-          arrow: shape.id,
-          from: start?.toId ?? null,
-          to: end?.toId ?? null,
-          fromAnchor: start ? { ...start.props.normalizedAnchor } : null,
-          toAnchor: end ? { ...end.props.normalizedAnchor } : null,
-        });
-      }
-      return {
-        pages: pageNames(),
-        page: editor.getCurrentPage().name,
-        bounds: framed(shapes.map((shape) => shape.id)),
-        shapes: shapes.map((shape) => {
-          const box = editor.getShapePageBounds(shape.id);
-          const geo = (shape.props as { geo?: string }).geo;
-          const text = plainTextOf(editor, shape);
-          return {
-            id: shape.id,
-            type: shape.type,
-            ...(geo !== undefined ? { geo } : {}),
-            x: box?.x ?? shape.x,
-            y: box?.y ?? shape.y,
-            w: box?.w ?? 0,
-            h: box?.h ?? 0,
-            text: text === "" ? null : text,
-            parentId: shape.parentId,
-          };
-        }),
-        bindings,
-        lints: lints(),
-      };
-    },
+    inspect: () => describeEditor(editor),
 
     lints,
 

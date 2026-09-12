@@ -58,12 +58,14 @@ export interface ApplyPlanResult {
   /** Every arrow created, in plan edge order. */
   edges: TLShapeId[];
   /**
-   * Mermaid subgraph id to the container shape id drawn behind its members.
+   * The container shape drawn behind each subgraph, in plan order.
    *
-   * HELPERS.md's return table predates this field; the parser needs the ids
-   * back so a caller can restyle or move a container without guessing its key.
+   * HELPERS.md's return table predates this field; the parser asked for the
+   * ids back so a caller can restyle or move a container without guessing.
+   * A container's key is derived from its subgraph, `shape:container:<id>`,
+   * so the pairing is recoverable from `plan.subgraphs` when it is wanted.
    */
-  containers: Record<string, TLShapeId>;
+  containers: TLShapeId[];
   /** Source lines the parser could not read, passed through unchanged. */
   unsupported: string[];
   /** The lint pass after the layout settled. Empty is the target. */
@@ -352,15 +354,17 @@ export function applyPlan(
     );
   }
 
-  const containers: Record<string, TLShapeId> = {};
+  const containers: TLShapeId[] = [];
   for (const subgraph of plan.subgraphs) {
     const members = subgraph.nodeIds.filter((id) => id in nodes);
     if (members.length === 0) continue;
-    containers[subgraph.id] = boxShapes(editor, members, {
-      label: subgraph.label,
-      margin: opts.margin ?? DEFAULT_CONTAINER_MARGIN,
-      shapeId: `container:${subgraph.id}`,
-    });
+    containers.push(
+      boxShapes(editor, members, {
+        label: subgraph.label,
+        margin: opts.margin ?? DEFAULT_CONTAINER_MARGIN,
+        shapeId: `container:${subgraph.id}`,
+      }),
+    );
   }
 
   return {
