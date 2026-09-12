@@ -657,7 +657,10 @@ function readMermaidResult(value: unknown): MermaidImport {
     );
   }
   const record = value as Record<string, unknown>;
-  const nodes: Record<string, string> = {};
+  // Null-prototype for the same reason the page uses one: `__proto__` is a
+  // legal mermaid node id, and copying it onto an ordinary object would set
+  // the prototype and lose the entry.
+  const nodes: Record<string, string> = Object.create(null) as Record<string, string>;
   const rawNodes = record["nodes"];
   if (typeof rawNodes === "object" && rawNodes !== null) {
     for (const [key, id] of Object.entries(rawNodes as Record<string, unknown>)) {

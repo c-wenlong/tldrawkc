@@ -362,7 +362,20 @@ export function createHelpers(editor: Editor): HelpersHandle {
    * const { nodes, edges, containers, unsupported } = helpers.mermaid(source, { direction: 'LR' })
    */
   function mermaid(source: string, opts: MermaidOptions = {}): ApplyPlanResult {
-    return applyPlan(editor, parseMermaid(source, opts), opts);
+    // `spacing` is the parser's name for the same two numbers `applyPlan`
+    // calls `rankGap` and `nodeGap`. The re-spacing pass runs after the plan,
+    // so without this it would throw away the gaps the caller just asked for
+    // and lay the diagram out at the defaults.
+    const apply: MermaidOptions = {
+      ...opts,
+      ...(opts.rankGap === undefined && opts.spacing?.rank !== undefined
+        ? { rankGap: opts.spacing.rank }
+        : {}),
+      ...(opts.nodeGap === undefined && opts.spacing?.node !== undefined
+        ? { nodeGap: opts.spacing.node }
+        : {}),
+    };
+    return applyPlan(editor, parseMermaid(source, opts), apply);
   }
 
   const helpers: Helpers = {

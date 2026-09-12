@@ -23,7 +23,13 @@ import { boxShapes, DEFAULT_CONTAINER_MARGIN } from "./layout.js";
 import { lintPage } from "./read.js";
 import type { Lint } from "./lints.js";
 import type { Rect, Side } from "./geometry.js";
-import { rank, type Direction, type Plan, type PlanNode } from "./mermaid.js";
+import {
+  rank,
+  type Direction,
+  type Plan,
+  type PlanNode,
+  type PlanSubgraph,
+} from "./mermaid.js";
 
 /** Directions whose ranks stack down the page. The other two run across it. */
 const VERTICAL: ReadonlySet<Direction> = new Set<Direction>(["TD", "TB", "BT"]);
@@ -286,12 +292,29 @@ function respaceRanks(
  * enough; the loop is there so a pathological label cannot leave the caller
  * with a picture nobody looked at.
  */
+/** How deep a subgraph sits, counting parents. Zero for a top-level block. */
+function subgraphDepth(plan: Plan, id: string): number {
+  const byId = new Map(plan.subgraphs.map((subgraph) => [subgraph.id, subgraph]));
+  let depth = 0;
+  let current = byId.get(id)?.parent;
+  // Bounded by the number of blocks, so a malformed parent cycle cannot hang.
+  while (current !== undefined && depth <= plan.subgraphs.length) {
+    depth += 1;
+    current = byId.get(current)?.parent;
+  }
+  return depth;
+}
+
 export function applyPlan(
   editor: Editor,
   plan: Plan,
   opts: ApplyPlanOptions = {},
 ): ApplyPlanResult {
-  const nodes: Record<string, TLShapeId> = {};
+  // Null-prototype, because `__proto__` is a legal mermaid node id and
+  // assigning it on an ordinary object sets the prototype instead of creating
+  // an own key: the box would be drawn and then vanish from the returned map,
+  // from the re-spacing pass, and from every edge lookup.
+  const nodes: Record<string, TLShapeId> = Object.create(null) as Record<string, TLShapeId>;
   for (const node of plan.nodes) {
     nodes[node.id] = makeBox(editor, node.id, node.label, {
       x: node.x,
@@ -304,9 +327,13 @@ export function applyPlan(
   }
 
   const ids = new Map<string, TLShapeId>(Object.entries(nodes));
+  // The plan's own top-left corner. Zero is the fallback for a plan with no
+  // nodes, not a floor: folding it into the `Math.min` moved every layout that
+  // started at a positive origin (which is all of them, the parser defaults to
+  // 60, 60) back to the page corner.
   const origin = opts.origin ?? {
-    x: Math.min(...plan.nodes.map((node) => node.x), 0),
-    y: Math.min(...plan.nodes.map((node) => node.y), 0),
+    x: plan.nodes.length > 0 ? Math.min(...plan.nodes.map((node) => node.x)) : 0,
+    y: plan.nodes.length > 0 ? Math.min(...plan.nodes.map((node) => node.y)) : 0,
   };
 
   if (opts.respace !== false && plan.nodes.length > 0) {
@@ -342,6 +369,9 @@ export function applyPlan(
         ...(nth > 0 ? { id: `arrow:${pair}#${nth + 1}` } : {}),
         ...(edge.label !== undefined ? { label: edge.label } : {}),
         ...(edge.dashed === true ? { dash: "dashed" as const } : {}),
+        // `a --- b` is an undirected relationship. `connect` defaults to an
+        // arrowhead at the end, so an open link has to say otherwise.
+        ...(edge.headless === true ? { head: "none" as const } : {}),
         // A back edge loops out to one side instead of cutting up the middle.
         // See backEdgeRouting.
         ...(back
@@ -354,17 +384,47 @@ export function applyPlan(
     );
   }
 
-  const containers: TLShapeId[] = [];
+  // Containers innermost first, so an outer block can enclose the container
+  // its children already got rather than only their boxes. An outer block
+  // whose members are all subgraphs has no direct nodes at all, and drawing
+  // nothing for it was silently losing a group and its label.
+  const containerOf = new Map<string, TLShapeId>();
+  const childrenOf = new Map<string, PlanSubgraph[]>();
   for (const subgraph of plan.subgraphs) {
-    const members = subgraph.nodeIds.filter((id) => id in nodes);
+    if (subgraph.parent === undefined) continue;
+    const siblings = childrenOf.get(subgraph.parent) ?? [];
+    siblings.push(subgraph);
+    childrenOf.set(subgraph.parent, siblings);
+  }
+  const deepestFirst = [...plan.subgraphs].sort(
+    (a, b) => subgraphDepth(plan, b.id) - subgraphDepth(plan, a.id),
+  );
+  for (const subgraph of deepestFirst) {
+    const members: TLShapeId[] = [];
+    for (const id of subgraph.nodeIds) {
+      const shapeId = nodes[id];
+      if (shapeId !== undefined) members.push(shapeId);
+    }
+    for (const child of childrenOf.get(subgraph.id) ?? []) {
+      const nested = containerOf.get(child.id);
+      if (nested !== undefined) members.push(nested);
+    }
     if (members.length === 0) continue;
-    containers.push(
+    containerOf.set(
+      subgraph.id,
       boxShapes(editor, members, {
         label: subgraph.label,
         margin: opts.margin ?? DEFAULT_CONTAINER_MARGIN,
         shapeId: `container:${subgraph.id}`,
       }),
     );
+  }
+  // Back to declaration order, which is the order `plan.subgraphs` is in and
+  // the order a caller pairing ids with subgraphs expects.
+  const containers: TLShapeId[] = [];
+  for (const subgraph of plan.subgraphs) {
+    const id = containerOf.get(subgraph.id);
+    if (id !== undefined) containers.push(id);
   }
 
   return {

@@ -307,6 +307,38 @@ describe("broken input", () => {
     expect(overlaps(plan)).toEqual([]);
   });
 
+  it("declines a self loop and keeps the rest of the diagram", () => {
+    // `a --> a` is legal mermaid and this importer cannot draw it: an arrow
+    // needs two different shapes to bind to. Reported, not thrown on, because
+    // throwing would roll back the whole import over one line.
+    const plan = parseMermaid("flowchart TD\n  a --> b\n  b --> b\n  b --> c");
+    expect(plan.unsupported).toEqual(["b --> b"]);
+    expect(plan.edges).toEqual([
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
+    ]);
+    expect(plan.nodes.map((n) => n.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("declines a link that names a subgraph instead of inventing a box", () => {
+    // Mermaid's cluster link. Declaring `groupA` as an ordinary node would put
+    // a box next to the container and connect the wrong two things.
+    const plan = parseMermaid(
+      [
+        "flowchart TD",
+        "  subgraph groupA",
+        "    a --> b",
+        "  end",
+        "  subgraph groupB",
+        "    c --> d",
+        "  end",
+        "  groupA --> groupB",
+      ].join("\n"),
+    );
+    expect(plan.unsupported).toEqual(["groupA --> groupB"]);
+    expect(plan.nodes.map((n) => n.id)).toEqual(["a", "b", "c", "d"]);
+  });
+
   it("never throws, whatever it is handed", () => {
     for (const source of ["", "   ", "flowchart TD", "a -->", "--> b", "subgraph\nend", "end"]) {
       expect(() => parseMermaid(source)).not.toThrow();
@@ -361,15 +393,17 @@ describe("edges", () => {
     ]);
   });
 
-  it("marks only the dotted links dashed", () => {
+  it("marks the dotted links dashed and the open links headless", () => {
+    // `---`, `-.-` and `===` are mermaid's open links: a relationship with no
+    // direction, and no arrowhead when it is drawn.
     const plan = parseMermaid(
       ["flowchart TD", "  a --> b", "  b --- c", "  c -.-> d", "  d -.- e", "  e ==> f"].join("\n"),
     );
     expect(plan.edges).toEqual([
       { from: "a", to: "b" },
-      { from: "b", to: "c" },
+      { from: "b", to: "c", headless: true },
       { from: "c", to: "d", dashed: true },
-      { from: "d", to: "e", dashed: true },
+      { from: "d", to: "e", dashed: true, headless: true },
       { from: "e", to: "f" },
     ]);
   });
@@ -380,7 +414,7 @@ describe("edges", () => {
     );
     expect(plan.edges).toEqual([
       { from: "a", to: "b" },
-      { from: "b", to: "c", label: "keeps going" },
+      { from: "b", to: "c", label: "keeps going", headless: true },
       { from: "c", to: "d", dashed: true },
     ]);
   });
@@ -459,7 +493,7 @@ describe("subgraphs", () => {
     );
     expect(plan.subgraphs).toEqual([
       { id: "outer", label: "Outer", nodeIds: ["a", "c"] },
-      { id: "inner", label: "Inner", nodeIds: ["b"] },
+      { id: "inner", label: "Inner", nodeIds: ["b"], parent: "outer" },
     ]);
     expect(plan.nodes.map((n) => n.subgraph)).toEqual(["outer", "inner", "outer", undefined]);
   });

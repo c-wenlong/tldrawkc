@@ -52,6 +52,12 @@ export interface PlanEdge {
   label?: string;
   /** Present and true only for mermaid's dotted links, `-.-` and `-.->`. */
   dashed?: boolean;
+  /**
+   * Present and true for an open link (`a --- b`, `a -.- b`, `a === b`), which
+   * mermaid draws with no arrowhead. Without it `applyPlan` would take the
+   * helper default and turn an undirected relationship into a directed one.
+   */
+  headless?: boolean;
 }
 
 /** One `subgraph ... end` block, flattened to its direct members. */
@@ -60,6 +66,14 @@ export interface PlanSubgraph {
   label: string;
   /** Node ids in first-seen order. A nested subgraph's nodes are not listed. */
   nodeIds: string[];
+  /**
+   * The subgraph this one was declared inside, if any.
+   *
+   * Nesting is only recoverable from this: `nodeIds` holds direct members, so
+   * an outer block whose children are all subgraphs has none of its own, and
+   * without a parent link `applyPlan` would draw no container for it at all.
+   */
+  parent?: string;
 }
 
 /** What `parseMermaid` returns and `applyPlan` consumes. */
@@ -173,6 +187,8 @@ const LINKS: ReadonlyArray<{ re: RegExp; dashed: boolean; labelled: boolean }> =
 interface Link {
   label?: string;
   dashed: boolean;
+  /** True when the operator ended without `>`, so mermaid draws no arrowhead. */
+  headless: boolean;
 }
 
 /** One node reference inside a statement, before it meets the node table. */
@@ -268,7 +284,9 @@ function matchLink(rest: string): { link: Link; length: number } | null {
   for (const form of LINKS) {
     const m = form.re.exec(rest);
     if (!m) continue;
-    const link: Link = { dashed: form.dashed };
+    // The `>` is optional in every pattern, so its absence is the whole
+    // difference between `a --- b` and `a --> b`.
+    const link: Link = { dashed: form.dashed, headless: !m[0].trimEnd().endsWith(">") };
     let length = m[0].length;
     if (form.labelled) {
       const label = m[1]?.trim();
@@ -468,7 +486,10 @@ export function tokenize(source: string): Tokenized {
         }
       }
       if (!subgraphs.has(id)) {
-        subgraphs.set(id, { id, label, nodeIds: [] });
+        const entry: PlanSubgraph = { id, label, nodeIds: [] };
+        const enclosing = open[open.length - 1];
+        if (enclosing !== undefined) entry.parent = enclosing;
+        subgraphs.set(id, entry);
         subgraphOrder.push(id);
       }
       open.push(id);
@@ -500,7 +521,28 @@ export function tokenize(source: string): Tokenized {
       continue;
     }
 
+    // A statement that names a subgraph as an endpoint (`groupA --> groupB`)
+    // is mermaid's cluster link. Declaring the id would invent an ordinary box
+    // alongside the container and connect the wrong things, so the whole
+    // statement is declined and the author sees the line.
+    if (parsed.some((specs) => specs.some((spec) => subgraphs.has(spec.id)))) {
+      decline(stmt);
+      continue;
+    }
+    // A self loop would reach `makeConnection`, which refuses identical ends,
+    // and the throw would roll back the whole import. The line is legal
+    // mermaid and this importer cannot draw it, which is what `unsupported`
+    // is for. The nodes it names are still declared.
+    const selfLoop = links.some((_, i) => {
+      const from = parsed[i];
+      const to = parsed[i + 1];
+      if (!from || !to) return false;
+      return from.some((f) => to.some((t) => t.id === f.id));
+    });
+    if (selfLoop) decline(stmt);
+
     for (const specs of parsed) for (const spec of specs) declare(spec);
+    if (selfLoop) continue;
     for (let i = 0; i < links.length; i++) {
       const from = parsed[i];
       const to = parsed[i + 1];
@@ -511,6 +553,7 @@ export function tokenize(source: string): Tokenized {
           const edge: PlanEdge = { from: f.id, to: t.id };
           if (link.label !== undefined) edge.label = link.label;
           if (link.dashed) edge.dashed = true;
+          if (link.headless) edge.headless = true;
           edges.push(edge);
         }
       }
