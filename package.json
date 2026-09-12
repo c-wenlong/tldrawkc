@@ -41,8 +41,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "npm run build:node && npm run build:page",
+    "build": "npm run build:node && npm run build:api && npm run build:page",
     "build:node": "tsc -p tsconfig.json",
+    "build:api": "node --input-type=module -e \"import{buildApiReference}from'./dist/lib/api.js';const r=await buildApiReference();console.log('api: '+r.count+' helpers -> '+r.path)\"",
     "build:page": "vite build",
     "clean": "node --input-type=module -e \"import{rm}from'node:fs/promises';await rm('dist',{recursive:true,force:true})\"",
     "lint": "eslint",

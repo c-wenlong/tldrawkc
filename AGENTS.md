@@ -9,9 +9,9 @@ This file is the operating manual. [README.md](README.md) says what the tool
 is for; the design docs it is built from live in the self-learn repo (see
 "Where the design lives" below).
 
-**Status: phase 1.** `new`, `run`, `shot` and `doctor` work. `inspect`,
-`export`, `from-mermaid` and `serve` are specified and not written yet;
-`tldrawkc help` lists which phase brings each one.
+**Status: phase 2.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
+`api` and `doctor` work. `serve` is specified and not written yet;
+`tldrawkc help` lists which phase brings it.
 
 ## What lives where
 
@@ -24,20 +24,21 @@ is for; the design docs it is built from live in the self-learn repo (see
 | `src/lib/files.ts` | every file write, all atomic (temp sibling, then rename) |
 | `src/lib/browser.ts` | resolving Chromium, opening the page, the typed wrapper over every bridge call, and `withCanvas` |
 | `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port |
-| `src/lib/canvas.ts` | one function per verb: `run`, `shot`, `newDocument`. Takes data, returns data |
+| `src/lib/canvas.ts` | one function per verb: `run`, `shot`, `newDocument`, `inspect`, `exportCanvas`, `fromMermaid`. Takes data, returns data |
+| `src/lib/api.ts` | the helper reference: a parser over the page's JSDoc, plus the build step that writes `dist/api.json` |
 | `src/lib/errors.ts` | the failures the tool raises on purpose, each carrying its exit code |
 | `src/lib/doctor.ts` | the environment checks, as data |
 | `src/lib/index.ts` | the public API, what `exports["."]` points at |
 | `src/page/` | the Vite app: `<Tldraw>`, the bridge, and (from phase 1) the helpers bag, mermaid importer and lint pass |
 | `test/unit/` | node only, no browser, runs on every push |
 | `test/e2e/` | real Chromium. CI installs one first |
-| `dist/` | build output, gitignored: `dist/cli/`, `dist/lib/`, `dist/page/` |
+| `dist/` | build output, gitignored: `dist/cli/`, `dist/lib/`, `dist/page/`, `dist/api.json` |
 
 ## Build and test
 
 ```bash
 npm ci
-npm run build          # tsc for src/cli and src/lib, vite for src/page
+npm run build          # tsc for src/cli and src/lib, the api reference, vite for src/page
 npm run lint
 npm run typecheck
 npm test               # unit
@@ -45,7 +46,9 @@ npm run test:e2e       # needs a Chromium and a build; see below
 node dist/cli/index.js doctor
 ```
 
-`npm run build` has to have run before anything works: `bin/tldrawkc` executes
+`npm run build` is three steps: `build:node` (tsc), `build:api` (the helper
+reference, which needs `build:node` to have run) and `build:page` (Vite). It
+has to have run before anything works: `bin/tldrawkc` executes
 `dist/cli/index.js`, and every command serves `dist/page/`. `doctor` warns
 when `dist/page` is older than `src/page` rather than failing, because a stale
 bundle still runs.
@@ -126,6 +129,19 @@ Inside `fn`, the order for anything that writes is fixed:
 Save before export is the reason exit 4 exists as its own code: a broken export
 costs a picture, never the work.
 
+Two verbs deliberately skip steps 3 and 4. `inspect` loads and reads, so the
+document is never written: reading is not editing, and a read that rewrites the
+file it read is a trap. `export` loads and exports, so the only thing that can
+fail is the export itself.
+
+`from-mermaid` owns one rule the others do not: without `--append` the target
+must not already exist. The command's job is migration, and overwriting a
+canvas someone has since fixed by hand is the one unrecoverable mistake
+available here. It also embeds the flowchart into the snippet as JSON and
+parses it back at runtime rather than concatenating it into the program text: a
+diagram is arbitrary text, and one quote in a node label would otherwise end
+the literal and let the rest of the file run as code.
+
 ### Exit codes
 
 A failure is one of the classes in `src/lib/errors.ts` and carries its own
@@ -144,6 +160,33 @@ act on.
 Exit 3 is not an error. The command succeeded, so `run` returns normally with
 its `lints` list and an `exitCode` of 3, and `--allow-lints` turns that into 0.
 The file is saved either way, because the work is real.
+
+## The helper reference
+
+`tldrawkc api` prints what a snippet can call, and it is generated rather than
+written: `npm run build:api` reads `src/page/helpers/index.ts` as text and
+writes `dist/api.json`, which the command prints. Reading the page's sources
+from Node is fine; importing them would break layering rule 1, which is why
+`src/lib/api.ts` is a parser and not an import.
+
+For a helper to appear, three things have to hold in the page:
+
+1. The `/** ... */` block sits **directly** above the declaration, with no
+   blank line between them. A blank line means the block documents the file or
+   the section, and picking it up would fill the reference with prose that
+   describes nothing.
+2. The declaration is a named function (`function name(`, optionally `export`
+   and/or `async`, at any indentation, so one inside `createHelpers` counts) or
+   an interface method signature (`name(...): Type;`).
+3. The block carries an `@example`. Without one the entry is dropped, because
+   the point of the reference is a line an agent can copy.
+
+The first paragraph is the summary, `@param` lines are kept, and the signature
+is the parameters as written. When a name is documented twice, once on the
+`Helpers` interface and once on the function that implements it, the function
+wins: it cannot drift from what runs. `src/lib/paths.ts` owns both the source
+list and where the JSON lands, and `test/unit/api.test.ts` pins every form the
+parser accepts and every near miss it must ignore.
 
 ## Layering rules
 
@@ -218,6 +261,13 @@ Collected as they are found, so they are not rediscovered.
   `parsed.value.getStoreSnapshot("document")`. Pass the scope explicitly:
   the argument defaults to `document` today, and `"all"` would drag session
   records into a snapshot meant only for `loadSnapshot`.
+- **`toImage` reports its size in page units, not pixels.** The `width` and
+  `height` on the result are the framed region before the pixel ratio, so at
+  the default ratio of 2 they are half the PNG. Multiplying them back does not
+  reproduce the file either: 1288.5024 units at ratio 2 came back as a
+  2576-pixel PNG, not the 2577 the arithmetic predicts. The bridge reads the
+  size out of the PNG's own IHDR chunk instead, because CLI.md promises pixels
+  and the file is the only thing a caller can check against.
 - **`toImage`'s `padding` defaults to `'auto'`, not to a number.** `'auto'`
   trims to visual content bounds and captures overflow like thick strokes and
   arrowheads; a number is fixed padding with no trimming, and anything beyond
@@ -272,6 +322,82 @@ Collected as they are found, so they are not rediscovered.
   but `mirror` still covers the whole 60-unit gap and lands on both box
   outlines, so this is a gap problem and not a helper bug. `HELPERS.md` owes
   the example wider gaps.
+
+- **tldraw 5 has no rounded rectangle.** `GeoShapeGeoStyle` is a fixed enum
+  (`rectangle`, `ellipse`, `oval`, `diamond`, `cloud`, `hexagon`, `star`,
+  `heart`, ...) and `TLGeoShapeProps` carries nothing to round a corner with,
+  so mermaid's `id(text)` has no exact home. The importer maps it to `oval`,
+  the capsule, which is the nearest silhouette and the only one that reads as
+  "not a plain box". The cost is that `id(text)` and `id([text])` come out
+  identical.
+- **`getSvgString` puts labels in a `<foreignObject>`, not in `<text>`.** The
+  export of an eight-box canvas had zero `<text>` and zero `<tspan>` elements
+  and ten `<foreignObject>` elements holding ordinary HTML `<div>` and `<p>`.
+  The label text is still there as a plain string, so grepping an SVG for a
+  label works, but anything that walks `<text>` nodes will find nothing, and a
+  rasteriser with no foreignObject support (librsvg, ImageMagick, older
+  Inkscape) will drop every label. Browsers render it correctly. Fonts are
+  inlined the way the design assumed: the SVG opens with `@font-face` blocks
+  whose `src` is a `data:font/woff2;base64,` URL.
+- **Nothing clips at a large coordinate; the export frame is what breaks.**
+  Measured in a real Chrome: `toImage` and `getSvgString` both framed a box at
+  x = 200000 correctly. What goes wrong is that every export is framed to the
+  union of the shapes, so one stray shape at x = 10000 makes a frame 10000
+  units wide, and against `MAX_SHOT_EDGE` (4096 px) that renders at about 0.4
+  px per unit: a normal 64-unit box comes out 26 px tall and unreadable. Past
+  roughly 100000 units the raster is also wrong, because tldraw quietly
+  downscales to stay inside the browser's canvas limits (a frame 128 units
+  tall came back as 126.96 at x = 100000 and 125.28 at x = 200000). That
+  measurement is where `OFF_PAGE_LIMIT` of 10000 comes from.
+- **The label rectangle in a shape's geometry is clamped to the shape.**
+  `GeoShapeUtil.getGeometry` returns a `Group2d` whose second child is a
+  `Rectangle2d` with `isLabel: true`, and it is `Math.min`ed against the
+  shape's own width and height. It is the right thing to read for "where does
+  this label sit" (`overlapping-text`), and useless for "is this label too
+  big", because it can never report a size the shape does not have.
+- **tldraw breaks a long word mid-word rather than letting it overflow.** The
+  label CSS is `overflow-wrap: break-word`, so `antidisestablishmentarianism`
+  in a 90-unit box renders as six stacked fragments rather than spilling out.
+  A naive "is the text wider than the shape" check therefore never fires. The
+  measurement that does is
+  `editor.textMeasure.measureText(text, { ..., maxWidth: innerWidth, measureScrollWidth: true, disableOverflowWrapBreaking: true })`,
+  whose `scrollWidth` reports the widest unbreakable run. That is what
+  `unreadable-label` compares against the shape width.
+- **The label metrics are `@internal`.** `LABEL_FONT_SIZES`,
+  `ARROW_LABEL_FONT_SIZES`, `LABEL_PADDING`, `ARROW_LABEL_PADDING` and
+  `TEXT_PROPS` live in
+  `node_modules/tldraw/src/lib/shapes/shared/default-shape-constants.ts` and
+  are not on the public entry point; `getFontFamily(theme, font)` is. Anything
+  that measures a label the way tldraw does has to copy the numbers, so
+  `helpers/read.ts` keeps them together with a pointer at the source file. The
+  live values come off `editor.getCurrentTheme()`, which carries `fontSize`,
+  `lineHeight` and `strokeWidth`.
+- **An arrow is the only shape that can carry a binding.** There is no line
+  binding, so `helpers.attribute`'s "bound line with no arrowhead" is an arrow
+  shape with `arrowheadStart` and `arrowheadEnd` both `none`. A real `line`
+  shape would be a loose mark that stays put when its box moves.
+- **An elbow arrow between two shapes in the same column routes straight
+  through everything between them.** The router only knows its two endpoints,
+  so a mermaid back edge (`look --> cli` in a top-down flowchart) drew a
+  vertical line through six boxes. `mermaid-apply.ts` detects a back edge from
+  the rank map and switches it to an `arc` anchored on the outside face of
+  both shapes, with a bend that puts the apex clear of the widest shape.
+- **An arc's `bend` is the distance from the chord midpoint to the apex, and a
+  positive one pushes it a quarter turn anticlockwise from the direction of
+  travel.** Measured, not assumed: an arrow running straight up between two
+  right-edge anchors with `bend: 300` came back with page bounds 300 units
+  wider on its right. So compute the sign as a dot product against the side
+  you want rather than guessing.
+- **A note shape has no `w` or `h`.** `TLNoteShapeProps` carries `size`,
+  `growY` and `fontSizeAdjustment`; tldraw sizes the note from its `size`
+  style, grows it down to fit, and shrinks the font rather than overflowing.
+  That is also why `unreadable-label` exempts notes.
+- **`editor.getShapePageBounds` on a geo shape already includes `growY`.** A
+  box whose label wrapped to three lines reported `h` of 122 against a
+  declared 64, so every layout helper reads the page bounds and never
+  `props.h`. `respaceRanks` in the mermaid importer exists entirely because of
+  this: the parser sizes boxes by counting characters, and the real heights
+  only exist after the shapes do.
 
 ## Where the design lives
 

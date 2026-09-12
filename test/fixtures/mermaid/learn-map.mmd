@@ -1,0 +1,113 @@
+flowchart TD
+  n_machine_model_and_input_size["Cost model and input size<br/><small>25%</small>"]
+  n_big_o_witness_definition["Big-O: the witness definition<br/><small>25%</small>"]
+  n_big_omega_witness_definition["Big-Omega: the witness definition<br/><small>25%</small>"]
+  n_counting_operations_with_summations["Counting loops with summations<br/><small>25%</small>"]
+  n_little_o_and_little_omega["Little-o and little-omega<br/><small>25%</small>"]
+  n_theta_as_both_bounds["Theta as both bounds<br/><small>25%</small>"]
+  n_case_analysis_worst_best_average["Worst, best, average case<br/><small>25%</small>"]
+  n_amortised_cost_and_aggregate_method["Amortised cost and the aggregate method<br/><small>25%</small>"]
+  n_accounting_method["Accounting method<br/><small>25%</small>"]
+  n_average_case_needs_a_distribution["Average case needs a distribution<br/><small>25%</small>"]
+  n_comparing_growth_rates["Comparing growth rates<br/><small>25%</small>"]
+  n_asymptotic_abstraction_and_when_it_lies["What asymptotics hides<br/><small>25%</small>"]
+  n_logarithm_base_is_a_constant_factor["Log base is a constant factor<br/><small>25%</small>"]
+  n_potential_method["Potential method<br/><small>25%</small>"]
+  n_problem_vs_algorithm_bounds["Problem bounds vs algorithm bounds<br/><small>25%</small>"]
+  n_recurrence_for_recursive_running_time["Writing the recurrence<br/><small>25%</small>"]
+  n_recursion_tree_method["Recursion tree method<br/><small>25%</small>"]
+  n_master_theorem["Master Theorem<br/><small>25%</small>"]
+  n_substitution_method["Substitution method<br/><small>25%</small>"]
+  n_master_theorem_limits["Where the Master Theorem fails<br/><small>25%</small>"]
+  n_asymptotic_running_time_analysis["Asymptotic running time analysis<br/><small>25%</small>"]
+  n_vector_as_a_list_of_numbers["Vector as a list of numbers<br/><small>38%</small>"]
+  n_dot_product["Dot product<br/><small>4%</small>"]
+  n_query_key_value_projections["Query key value projections<br/><small>4%</small>"]
+  n_softmax["Softmax<br/><small>61%</small>"]
+  n_attention_weights["Attention weights<br/><small>4%</small>"]
+  n_self_attention["Self-attention<br/><small>5%</small>"]
+  n_multi_head_attention["Multi-head attention<br/><small>39%</small>"]
+  n_positional_encoding["Positional encoding<br/><small>39%</small>"]
+  n_transformer_block["Transformer block<br/><small>60%</small>"]
+  n_tool_calling["Tool calling<br/><small>25%</small>"]
+  n_react_loop["ReAct loop<br/><small>25%</small>"]
+  n_machine_model_and_input_size -.-> n_big_o_witness_definition
+  n_big_o_witness_definition -.-> n_big_omega_witness_definition
+  n_machine_model_and_input_size --> n_counting_operations_with_summations
+  n_big_o_witness_definition --> n_little_o_and_little_omega
+  n_big_omega_witness_definition -.-> n_little_o_and_little_omega
+  n_big_o_witness_definition --> n_theta_as_both_bounds
+  n_big_omega_witness_definition --> n_theta_as_both_bounds
+  n_machine_model_and_input_size --> n_case_analysis_worst_best_average
+  n_big_o_witness_definition --> n_case_analysis_worst_best_average
+  n_big_omega_witness_definition --> n_case_analysis_worst_best_average
+  n_theta_as_both_bounds -.-> n_case_analysis_worst_best_average
+  n_machine_model_and_input_size --> n_amortised_cost_and_aggregate_method
+  n_case_analysis_worst_best_average -.-> n_amortised_cost_and_aggregate_method
+  n_counting_operations_with_summations -.-> n_amortised_cost_and_aggregate_method
+  n_big_o_witness_definition -.-> n_amortised_cost_and_aggregate_method
+  n_amortised_cost_and_aggregate_method --> n_accounting_method
+  n_case_analysis_worst_best_average --> n_average_case_needs_a_distribution
+  n_counting_operations_with_summations -.-> n_average_case_needs_a_distribution
+  n_big_o_witness_definition --> n_comparing_growth_rates
+  n_little_o_and_little_omega -.-> n_comparing_growth_rates
+  n_theta_as_both_bounds -.-> n_comparing_growth_rates
+  n_theta_as_both_bounds --> n_asymptotic_abstraction_and_when_it_lies
+  n_machine_model_and_input_size --> n_asymptotic_abstraction_and_when_it_lies
+  n_comparing_growth_rates -.-> n_asymptotic_abstraction_and_when_it_lies
+  n_theta_as_both_bounds --> n_logarithm_base_is_a_constant_factor
+  n_comparing_growth_rates -.-> n_logarithm_base_is_a_constant_factor
+  n_amortised_cost_and_aggregate_method --> n_potential_method
+  n_accounting_method -.-> n_potential_method
+  n_big_o_witness_definition --> n_problem_vs_algorithm_bounds
+  n_big_omega_witness_definition --> n_problem_vs_algorithm_bounds
+  n_case_analysis_worst_best_average -.-> n_problem_vs_algorithm_bounds
+  n_comparing_growth_rates -.-> n_problem_vs_algorithm_bounds
+  n_machine_model_and_input_size --> n_recurrence_for_recursive_running_time
+  n_counting_operations_with_summations -.-> n_recurrence_for_recursive_running_time
+  n_case_analysis_worst_best_average -.-> n_recurrence_for_recursive_running_time
+  n_recurrence_for_recursive_running_time --> n_recursion_tree_method
+  n_counting_operations_with_summations -.-> n_recursion_tree_method
+  n_comparing_growth_rates -.-> n_recursion_tree_method
+  n_recurrence_for_recursive_running_time --> n_master_theorem
+  n_comparing_growth_rates --> n_master_theorem
+  n_recursion_tree_method -.-> n_master_theorem
+  n_recurrence_for_recursive_running_time --> n_substitution_method
+  n_recursion_tree_method -.-> n_substitution_method
+  n_big_o_witness_definition -.-> n_substitution_method
+  n_master_theorem --> n_master_theorem_limits
+  n_substitution_method -.-> n_master_theorem_limits
+  n_recursion_tree_method -.-> n_master_theorem_limits
+  n_counting_operations_with_summations --> n_asymptotic_running_time_analysis
+  n_case_analysis_worst_best_average --> n_asymptotic_running_time_analysis
+  n_substitution_method --> n_asymptotic_running_time_analysis
+  n_master_theorem --> n_asymptotic_running_time_analysis
+  n_potential_method --> n_asymptotic_running_time_analysis
+  n_asymptotic_abstraction_and_when_it_lies -.-> n_asymptotic_running_time_analysis
+  n_problem_vs_algorithm_bounds -.-> n_asymptotic_running_time_analysis
+  n_master_theorem_limits -.-> n_asymptotic_running_time_analysis
+  n_average_case_needs_a_distribution -.-> n_asymptotic_running_time_analysis
+  n_logarithm_base_is_a_constant_factor -.-> n_asymptotic_running_time_analysis
+  n_vector_as_a_list_of_numbers --> n_dot_product
+  n_vector_as_a_list_of_numbers --> n_query_key_value_projections
+  n_vector_as_a_list_of_numbers --> n_softmax
+  n_dot_product --> n_attention_weights
+  n_softmax --> n_attention_weights
+  n_query_key_value_projections --> n_attention_weights
+  n_attention_weights --> n_self_attention
+  n_self_attention --> n_multi_head_attention
+  n_self_attention --> n_positional_encoding
+  n_multi_head_attention --> n_transformer_block
+  n_positional_encoding --> n_transformer_block
+  n_transformer_block -.-> n_tool_calling
+  n_tool_calling --> n_react_loop
+
+  classDef mastered fill:#dcfce7,stroke:#16a34a,stroke-width:1px,color:#14532d;
+  classDef solid fill:#e0f2fe,stroke:#0284c7,stroke-width:1px,color:#0c4a6e;
+  classDef shaky fill:#fef9c3,stroke:#ca8a04,stroke-width:1px,color:#713f12;
+  classDef weak fill:#ffedd5,stroke:#ea580c,stroke-width:1px,color:#7c2d12;
+  classDef gap fill:#fee2e2,stroke:#dc2626,stroke-width:1px,color:#7f1d1d;
+  classDef frontier stroke-width:3px,stroke-dasharray:4 2;
+  class n_softmax,n_transformer_block shaky;
+  class n_machine_model_and_input_size,n_big_o_witness_definition,n_big_omega_witness_definition,n_counting_operations_with_summations,n_little_o_and_little_omega,n_theta_as_both_bounds,n_case_analysis_worst_best_average,n_amortised_cost_and_aggregate_method,n_accounting_method,n_average_case_needs_a_distribution,n_comparing_growth_rates,n_asymptotic_abstraction_and_when_it_lies,n_logarithm_base_is_a_constant_factor,n_potential_method,n_problem_vs_algorithm_bounds,n_recurrence_for_recursive_running_time,n_recursion_tree_method,n_master_theorem,n_substitution_method,n_master_theorem_limits,n_asymptotic_running_time_analysis,n_vector_as_a_list_of_numbers,n_dot_product,n_query_key_value_projections,n_attention_weights,n_self_attention,n_multi_head_attention,n_positional_encoding,n_tool_calling,n_react_loop gap;
+  class n_big_o_witness_definition,n_big_omega_witness_definition,n_machine_model_and_input_size,n_tool_calling,n_vector_as_a_list_of_numbers frontier;

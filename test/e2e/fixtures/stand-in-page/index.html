@@ -28,7 +28,11 @@
 
         const editor = {
           createShape(shape) {
-            state.shapes.push({ bindings: [], ...clone(shape) });
+            // `typeName` comes from tldraw's store, not from the caller, so a
+            // snippet never passes one. Defaulting it here is what lets a shape
+            // a snippet made survive a save and a reload, which is what
+            // `inspect` after `run` depends on.
+            state.shapes.push({ typeName: "shape", bindings: [], ...clone(shape) });
             return shape.id;
           },
           getCurrentPageShapes: () => clone(state.shapes),
@@ -62,6 +66,57 @@
             return shapeId;
           },
           getLints: () => lints(),
+
+          /*
+            A deliberately dumb mermaid importer.
+
+            It understands `a[label] --> b[label]`, a subgraph header and
+            nothing else, which is enough to pin what Node decides: the file
+            rule, the save, the shot, the unsupported list and the exit code.
+            The real parser is unit tested against fixtures, and the real
+            layout is checked by looking at what the page drew.
+          */
+          mermaid(source, options = {}) {
+            const nodes = {};
+            const edges = [];
+            const containers = [];
+            const unsupported = [];
+            let column = 0;
+
+            const ensure = (token) => {
+              const match = /^([A-Za-z0-9_]+)(?:\[([^\]]*)\])?$/.exec(String(token).trim());
+              if (!match) return null;
+              const id = match[1];
+              if (!nodes[id]) {
+                column += 1;
+                nodes[id] = helpers.box(id, match[2] ?? id, { x: column * 220, y: 0 });
+              }
+              return id;
+            };
+
+            for (const raw of String(source).split("\n")) {
+              const line = raw.trim();
+              if (line === "" || line.startsWith("%%") || line === "end") continue;
+              if (/^(flowchart|graph)\b/.test(line)) continue;
+              if (/^subgraph\b/.test(line)) {
+                containers.push(helpers.box(`container-${containers.length}`, line, { x: 0, y: 400 }));
+                continue;
+              }
+              const halves = line.split("-->");
+              if (halves.length === 2) {
+                const from = ensure(halves[0]);
+                const to = ensure(halves[1]);
+                if (from && to) {
+                  edges.push(helpers.connect(from, to));
+                  continue;
+                }
+              }
+              if (ensure(line)) continue;
+              unsupported.push(line);
+            }
+
+            return { nodes, edges, containers, unsupported };
+          },
         };
 
         /** The one rule the real lint pass must also have. */
@@ -153,6 +208,33 @@
               ids,
             };
           },
+
+          inspect: () => ({
+            pages: [...state.pages],
+            page: state.page,
+            bounds: { x: 0, y: 0, w: 480, h: 320 },
+            shapes: state.shapes.map((shape) => ({
+              id: shape.id,
+              type: shape.type,
+              ...(shape.type === "geo" ? { geo: shape.props?.geo ?? "rectangle" } : {}),
+              x: shape.x,
+              y: shape.y,
+              w: shape.props?.w ?? 0,
+              h: shape.props?.h ?? 0,
+              text: shape.props?.text ? shape.props.text : null,
+              parentId: "page:page",
+            })),
+            bindings: state.shapes
+              .filter((shape) => shape.type === "arrow")
+              .map((shape) => ({
+                arrow: shape.id,
+                from: shape.bindings?.[0] ?? null,
+                to: shape.bindings?.[1] ?? null,
+                fromAnchor: shape.bindings?.[0] ? { x: 1, y: 0.5 } : null,
+                toAnchor: shape.bindings?.[1] ? { x: 0, y: 0.5 } : null,
+              })),
+            lints: lints(),
+          }),
 
           lints,
           zoomToFit: () => ({ x: 0, y: 0, w: 480, h: 320 }),

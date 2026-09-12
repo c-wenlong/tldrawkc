@@ -287,6 +287,45 @@ export interface SvgResult {
   height: number;
 }
 
+/** One shape as `inspect` reports it. `geo` is present only on geo shapes. */
+export interface InspectShape {
+  id: string;
+  type: string;
+  geo?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** The label's plain text, or `null` when the shape has none. */
+  text: string | null;
+  parentId: string;
+}
+
+/** One arrow's two binding ends, as `inspect` reports them. */
+export interface InspectBinding {
+  arrow: string;
+  from: string | null;
+  to: string | null;
+  fromAnchor: { x: number; y: number } | null;
+  toAnchor: { x: number; y: number } | null;
+}
+
+/**
+ * The "read the canvas" structure.
+ *
+ * The bridge table in ARCHITECTURE.md is the single definition of this shape,
+ * and `inspect --json` prints it unchanged, so nothing here reorders, renames
+ * or enriches it. `bounds` is `null` on an empty page.
+ */
+export interface InspectData {
+  pages: string[];
+  page: string;
+  bounds: Bounds | null;
+  shapes: InspectShape[];
+  bindings: InspectBinding[];
+  lints: Lint[];
+}
+
 /**
  * `window.__tldrawkc`, exactly as the bridge table in ARCHITECTURE.md defines
  * it. Every method is declared as returning a promise because that is all
@@ -301,6 +340,7 @@ interface BridgeApi {
   save(): Promise<string>;
   shot(options: ShotOptions): Promise<ShotResult>;
   svg(options: SvgOptions): Promise<SvgResult>;
+  inspect(): Promise<InspectData>;
   lints(): Promise<Lint[]>;
   zoomToFit(): Promise<Bounds>;
 }
@@ -361,6 +401,7 @@ export interface CanvasHandle {
   save(): Promise<string>;
   shot(options?: ShotOptions): Promise<ShotResult>;
   svg(options?: SvgOptions): Promise<SvgResult>;
+  inspect(): Promise<InspectData>;
   lints(): Promise<Lint[]>;
   zoomToFit(): Promise<Bounds>;
 
@@ -470,6 +511,7 @@ export async function openCanvasPage(options: OpenCanvasOptions): Promise<Canvas
     shot: (shotOptions = {}) =>
       page.evaluate((opts) => window.__tldrawkc.shot(opts), shotOptions),
     svg: (svgOptions = {}) => page.evaluate((opts) => window.__tldrawkc.svg(opts), svgOptions),
+    inspect: () => page.evaluate(() => window.__tldrawkc.inspect()),
     lints: () => page.evaluate(() => window.__tldrawkc.lints()),
     zoomToFit: () => page.evaluate(() => window.__tldrawkc.zoomToFit()),
     has: (method) =>

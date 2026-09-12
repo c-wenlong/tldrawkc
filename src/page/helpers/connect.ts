@@ -1,5 +1,6 @@
 /**
- * `connect`, the only sanctioned way to draw a meaningful arrow.
+ * `connect`, the only sanctioned way to draw a meaningful arrow, plus the two
+ * shorthands built on it: `attribute` and `stub`.
  *
  * Layering rule 6: every arrow that means something is bound at both ends, so
  * it follows its shapes when they move and survives a relayout. A raw arrow
@@ -26,7 +27,8 @@ import {
   type Side,
 } from "./geometry.js";
 import { toShapeId, type ShapeKey, type ShapeMeta } from "./ids.js";
-import { connectionKey } from "./keys.js";
+import { connectionKey, stripShapePrefix } from "./keys.js";
+import { makeText } from "./shapes.js";
 
 /** How an end of the arrow is placed on its shape: a side name, or a 0..1 point. */
 export type AnchorSpec = Side | NormalizedAnchor;
@@ -206,4 +208,132 @@ export function makeConnection(
   ]);
 
   return arrowId;
+}
+
+/** Options for {@link makeAttribute}. */
+export interface AttributeOptions {
+  /** Where along the side the stub leaves, 0..1, default 0.5. Space several attributes with it. */
+  at?: number;
+  /** Stub length, in page units, default 60. */
+  gap?: number;
+  /** Text size, default `s`. */
+  size?: TLDefaultSizeStyle;
+  /** Colour of the text and the stub, default `black`. */
+  color?: TLDefaultColorStyle;
+  /** Text font, default `draw`. */
+  font?: TLDefaultFontStyle;
+  /** Override the derived keys. `<owner>.<label>` by default. */
+  id?: string;
+}
+
+/** Default stub length for {@link makeAttribute}, in page units. */
+export const DEFAULT_ATTRIBUTE_GAP = 60;
+/** Size of the text shape an attribute writes, before tldraw measures it. */
+const ATTRIBUTE_TEXT_WIDTH = 120;
+
+/**
+ * Write a short label off one side of a box and join it with a bound line.
+ *
+ * The ERD convenience from HELPERS.md. The joining line is an arrow shape with
+ * no head at either end, because an arrow is the only tldraw shape that can
+ * carry a binding: a real `line` shape would be a loose mark that moves out of
+ * place the moment the box does.
+ */
+export function makeAttribute(
+  editor: Editor,
+  ownerKey: ShapeKey,
+  label: string,
+  side: Side,
+  opts: AttributeOptions = {},
+): { textId: TLShapeId; lineId: TLShapeId } {
+  const ownerId = toShapeId(ownerKey);
+  const owner = requireRect(editor, ownerId, "attribute owner");
+  const at = Math.min(1, Math.max(0, opts.at ?? 0.5));
+  const gap = opts.gap ?? DEFAULT_ATTRIBUTE_GAP;
+  const key = opts.id ?? `attr:${stripShapePrefix(String(ownerKey))}.${label.replace(/\s+/gu, "-").toLowerCase()}`;
+
+  const anchor: NormalizedAnchor =
+    side === "left" || side === "right" ? { x: side === "right" ? 1 : 0, y: at } : { x: at, y: side === "bottom" ? 1 : 0 };
+  const from = anchorPoint(owner, anchor);
+
+  // The text sits a stub's length beyond the owner's edge, centred on the
+  // anchor across the other axis, so a column of attributes reads as a column.
+  const half = ATTRIBUTE_TEXT_WIDTH / 2;
+  const place: Record<Side, { x: number; y: number }> = {
+    right: { x: from.x + gap, y: from.y - 16 },
+    left: { x: from.x - gap - ATTRIBUTE_TEXT_WIDTH, y: from.y - 16 },
+    top: { x: from.x - half, y: from.y - gap - 32 },
+    bottom: { x: from.x - half, y: from.y + gap },
+  };
+  const at2 = place[side];
+
+  const textId = makeText(editor, `${key}.text`, label, {
+    x: at2.x,
+    y: at2.y,
+    size: opts.size ?? "s",
+    color: opts.color ?? "black",
+    font: opts.font ?? "draw",
+    textAlign: side === "left" ? "end" : "start",
+  });
+
+  const opposite: Record<Side, Side> = { right: "left", left: "right", top: "bottom", bottom: "top" };
+  const lineId = makeConnection(editor, ownerId, textId, {
+    id: `${key}.line`,
+    kind: "arc",
+    head: "none",
+    start: anchor,
+    end: opposite[side],
+    size: opts.size ?? "s",
+    color: opts.color ?? "black",
+  });
+
+  return { textId, lineId };
+}
+
+/**
+ * Draw a short unbound line and return its id.
+ *
+ * For the loose marks in a legend and nothing else. It carries
+ * `meta.lintIgnore = ['friendless-arrow']`, which is the only reason a line
+ * with nothing at either end is allowed to exist: the lint pass would
+ * otherwise, correctly, call it an arrow pointing at empty space.
+ */
+export function makeStub(
+  editor: Editor,
+  key: ShapeKey,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  opts: { color?: TLDefaultColorStyle; size?: TLDefaultSizeStyle; dash?: TLDefaultDashStyle } = {},
+): TLShapeId {
+  const id = toShapeId(key);
+  const props = {
+    kind: "arc" as const,
+    color: opts.color ?? "black",
+    labelColor: opts.color ?? "black",
+    fill: "none" as const,
+    dash: opts.dash ?? "draw",
+    size: opts.size ?? "s",
+    font: "draw" as const,
+    arrowheadStart: "none" as const,
+    arrowheadEnd: "none" as const,
+    bend: 0,
+    start: { x: 0, y: 0 },
+    end: { x: dx, y: dy },
+    richText: toRichText(""),
+  } satisfies Partial<TLArrowShape["props"]>;
+
+  const partial = {
+    id,
+    type: "arrow" as const,
+    x,
+    y,
+    meta: { lintIgnore: ["friendless-arrow"] },
+    props,
+  };
+
+  if (editor.getShape(id)) editor.updateShape(partial);
+  else editor.createShape(partial);
+  return id;
 }

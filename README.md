@@ -5,10 +5,9 @@ line, take a picture of it, look, and fix it. Built for coding agents, which
 write code well and read images well but cannot see what they just drew unless
 something renders it.
 
-**Status: phase 1.** `new`, `run`, `shot` and `doctor` work. Reading the canvas
-(`inspect`), exporting SVG (`export`), importing mermaid (`from-mermaid`) and
-the human view (`serve`) are specified and not written yet; `tldrawkc help`
-lists which phase brings each one.
+**Status: phase 2.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
+`api` and `doctor` work. The human view (`serve`) is specified and not written
+yet; `tldrawkc help` lists which phase brings it.
 
 ## What it draws
 
@@ -38,6 +37,40 @@ tldrawkc run loop.tldr --code loop.js --shot loop.png --create
 Every arrow is bound at both ends, so moving a box drags its arrows with it.
 The labels are tldraw's own Shantell Sans, bundled into the page so nothing
 is fetched at render time.
+
+## From mermaid
+
+Most diagrams that already exist are mermaid, so `from-mermaid` lifts one onto
+the canvas and leaves it editable. This is `test/fixtures/mermaid/subgraph-8-9.mmd`,
+8 nodes, 9 edges and a subgraph, run through the command and screenshotted by
+the tool:
+
+```
+flowchart TD
+  agent[agent cli] --> cli[tldrawkc]
+  cli --> browser[chromium]
+  browser --> page[tldraw page]
+  subgraph render [rendering]
+    page --> shapes[shapes and arrows]
+    shapes --> png[png export]
+    shapes --> svg[svg export]
+  end
+  png --> look{Looks right?}
+  svg --> look
+  look -->|no| cli
+```
+
+```bash
+tldrawkc from-mermaid eight.tldr --source subgraph-8-9.mmd --shot eight.png
+```
+
+![A top-down flowchart on a tldraw canvas: agent cli to tldrawkc to chromium to tldraw page, then a labelled rendering container holding shapes and arrows above png export and svg export, both feeding a Looks right? diamond, and a curved arrow labelled no running back up to tldrawkc](docs/example-mermaid.png)
+
+Every edge is a bound arrow, the subgraph is a labelled container behind its
+shapes, and the back edge is an arc routed around the column rather than a
+straight line through six boxes. Anything the parser cannot read is listed
+under `unsupported` instead of being dropped: mermaid's `classDef` and `class`
+styling lines are the usual ones.
 
 ## The loop
 
@@ -83,6 +116,10 @@ npm run canvas -- doctor
 tldrawkc new diagram.tldr                 # an empty document, refuses to overwrite
 tldrawkc run diagram.tldr --code draw.js --create --shot out.png
 tldrawkc shot diagram.tldr                # a PNG in the temp directory, path printed
+tldrawkc inspect diagram.tldr             # every shape, binding and lint. Exits 3 on lints
+tldrawkc export diagram.tldr --svg out.svg --png out.png
+tldrawkc from-mermaid map.tldr --source map.mmd
+tldrawkc api                              # what a snippet can call
 tldrawkc doctor                           # node, the bundle, Chromium, the page, fonts, write access
 ```
 
@@ -101,6 +138,46 @@ JS
 ```
 
 Add `--json` to any command for one machine-readable object on stdout.
+
+### Reading, exporting, importing
+
+`inspect` is how an agent looks before it edits: one line per shape with its
+geo, position, size and label, then the bindings, then the lints. With `--json`
+it prints the bridge's own structure, so the same object backs the printed view
+and any other consumer.
+
+`export` writes the files that get committed: a self-contained SVG with the
+fonts inlined, a PNG, or both. Nothing is executed and nothing is saved, so the
+`.tldr` cannot be damaged by an export.
+
+`from-mermaid` lifts an existing flowchart onto the canvas, which is the point
+of the whole tool for a repo whose diagrams are all mermaid today:
+
+```bash
+tldrawkc from-mermaid map.tldr --source learn/map.mmd --shot /tmp/map.png
+```
+
+Without `--append` the document must not already exist, so a canvas someone has
+since fixed by hand is never overwritten. Any line the parser cannot read is
+reported, in the result and on stderr, and never silently dropped.
+
+### The helper reference
+
+`tldrawkc api` prints what a snippet can call, generated from the helpers' own
+JSDoc so the docs and the code cannot drift. `npm run build` regenerates
+`dist/api.json` as part of the build.
+
+The convention, which the page side has to keep to for a helper to appear:
+
+- a `/** ... */` block sits **directly** above the declaration, with no blank
+  line between them
+- the declaration is a named function (`function name(`, optionally `export`
+  and `async`, at any indentation) or an interface method signature
+- the block carries an `@example`, because the point of the reference is a line
+  an agent can copy
+
+The first paragraph becomes the summary, `@param` lines are kept, and the
+signature is the parameters as written.
 
 ### Exit codes
 

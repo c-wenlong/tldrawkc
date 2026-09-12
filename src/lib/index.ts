@@ -6,8 +6,9 @@
  * data: no printing, no `process.exit`. That is what keeps a future MCP entry
  * (DECISIONS.md D6) a thin wrapper rather than a rewrite.
  *
- * Phase 1 adds the drawing verbs. `inspect`, `export`, `fromMermaid` and
- * `serve` land in later phases and are re-exported from here when they do.
+ * Phase 2 adds `inspect`, `exportCanvas` and `fromMermaid`, plus the helper
+ * reference generator behind the `api` command. `serve` lands in phase 4 and is
+ * re-exported from here when it does.
  */
 
 export {
@@ -26,6 +27,9 @@ export {
   type ChromiumSource,
   type ExecResult,
   type FailedRequest,
+  type InspectBinding,
+  type InspectData,
+  type InspectShape,
   type Lint,
   type LoadResult,
   type OpenCanvasOptions,
@@ -41,9 +45,20 @@ export {
 } from "./browser.js";
 
 export {
+  exportCanvas,
+  fromMermaid,
+  inspect,
   newDocument,
   run,
   shot,
+  type ExportOptions,
+  type ExportResult,
+  type ExportedFile,
+  type FromMermaidOptions,
+  type FromMermaidResult,
+  type InspectCommandResult,
+  type InspectOptions,
+  type MermaidOptions,
   type NewDocumentOptions,
   type NewDocumentResult,
   type RunOptions,
@@ -51,6 +66,17 @@ export {
   type ShotCommandOptions,
   type ShotCommandResult,
 } from "./canvas.js";
+
+export {
+  buildApiReference,
+  extractHelperDocs,
+  readApiReference,
+  readApiSources,
+  selectHelperDocs,
+  type BuildApiResult,
+  type HelperDoc,
+  type SourceFile,
+} from "./api.js";
 
 export {
   doctor,
@@ -82,8 +108,11 @@ export {
 } from "./files.js";
 
 export {
+  API_JSON,
+  API_SOURCE_FILES,
   CLI_ENTRY,
   DIST_DIR,
+  HELPERS_SRC_DIR,
   doctorProbePath,
   PACKAGE_ROOT,
   PAGE_DIST_DIR,
