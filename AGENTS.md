@@ -9,9 +9,9 @@ This file is the operating manual. [README.md](README.md) says what the tool
 is for; the design docs it is built from live in the self-learn repo (see
 "Where the design lives" below).
 
-**Status: phase 1.** `new`, `run`, `shot` and `doctor` work. `inspect`,
-`export`, `from-mermaid` and `serve` are specified and not written yet;
-`tldrawkc help` lists which phase brings each one.
+**Status: phase 2.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
+`api` and `doctor` work. `serve` is specified and not written yet;
+`tldrawkc help` lists which phase brings it.
 
 ## What lives where
 
@@ -24,20 +24,21 @@ is for; the design docs it is built from live in the self-learn repo (see
 | `src/lib/files.ts` | every file write, all atomic (temp sibling, then rename) |
 | `src/lib/browser.ts` | resolving Chromium, opening the page, the typed wrapper over every bridge call, and `withCanvas` |
 | `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port |
-| `src/lib/canvas.ts` | one function per verb: `run`, `shot`, `newDocument`. Takes data, returns data |
+| `src/lib/canvas.ts` | one function per verb: `run`, `shot`, `newDocument`, `inspect`, `exportCanvas`, `fromMermaid`. Takes data, returns data |
+| `src/lib/api.ts` | the helper reference: a parser over the page's JSDoc, plus the build step that writes `dist/api.json` |
 | `src/lib/errors.ts` | the failures the tool raises on purpose, each carrying its exit code |
 | `src/lib/doctor.ts` | the environment checks, as data |
 | `src/lib/index.ts` | the public API, what `exports["."]` points at |
 | `src/page/` | the Vite app: `<Tldraw>`, the bridge, and (from phase 1) the helpers bag, mermaid importer and lint pass |
 | `test/unit/` | node only, no browser, runs on every push |
 | `test/e2e/` | real Chromium. CI installs one first |
-| `dist/` | build output, gitignored: `dist/cli/`, `dist/lib/`, `dist/page/` |
+| `dist/` | build output, gitignored: `dist/cli/`, `dist/lib/`, `dist/page/`, `dist/api.json` |
 
 ## Build and test
 
 ```bash
 npm ci
-npm run build          # tsc for src/cli and src/lib, vite for src/page
+npm run build          # tsc for src/cli and src/lib, the api reference, vite for src/page
 npm run lint
 npm run typecheck
 npm test               # unit
@@ -45,7 +46,9 @@ npm run test:e2e       # needs a Chromium and a build; see below
 node dist/cli/index.js doctor
 ```
 
-`npm run build` has to have run before anything works: `bin/tldrawkc` executes
+`npm run build` is three steps: `build:node` (tsc), `build:api` (the helper
+reference, which needs `build:node` to have run) and `build:page` (Vite). It
+has to have run before anything works: `bin/tldrawkc` executes
 `dist/cli/index.js`, and every command serves `dist/page/`. `doctor` warns
 when `dist/page` is older than `src/page` rather than failing, because a stale
 bundle still runs.
@@ -126,6 +129,19 @@ Inside `fn`, the order for anything that writes is fixed:
 Save before export is the reason exit 4 exists as its own code: a broken export
 costs a picture, never the work.
 
+Two verbs deliberately skip steps 3 and 4. `inspect` loads and reads, so the
+document is never written: reading is not editing, and a read that rewrites the
+file it read is a trap. `export` loads and exports, so the only thing that can
+fail is the export itself.
+
+`from-mermaid` owns one rule the others do not: without `--append` the target
+must not already exist. The command's job is migration, and overwriting a
+canvas someone has since fixed by hand is the one unrecoverable mistake
+available here. It also embeds the flowchart into the snippet as JSON and
+parses it back at runtime rather than concatenating it into the program text: a
+diagram is arbitrary text, and one quote in a node label would otherwise end
+the literal and let the rest of the file run as code.
+
 ### Exit codes
 
 A failure is one of the classes in `src/lib/errors.ts` and carries its own
@@ -144,6 +160,33 @@ act on.
 Exit 3 is not an error. The command succeeded, so `run` returns normally with
 its `lints` list and an `exitCode` of 3, and `--allow-lints` turns that into 0.
 The file is saved either way, because the work is real.
+
+## The helper reference
+
+`tldrawkc api` prints what a snippet can call, and it is generated rather than
+written: `npm run build:api` reads `src/page/helpers/index.ts` as text and
+writes `dist/api.json`, which the command prints. Reading the page's sources
+from Node is fine; importing them would break layering rule 1, which is why
+`src/lib/api.ts` is a parser and not an import.
+
+For a helper to appear, three things have to hold in the page:
+
+1. The `/** ... */` block sits **directly** above the declaration, with no
+   blank line between them. A blank line means the block documents the file or
+   the section, and picking it up would fill the reference with prose that
+   describes nothing.
+2. The declaration is a named function (`function name(`, optionally `export`
+   and/or `async`, at any indentation, so one inside `createHelpers` counts) or
+   an interface method signature (`name(...): Type;`).
+3. The block carries an `@example`. Without one the entry is dropped, because
+   the point of the reference is a line an agent can copy.
+
+The first paragraph is the summary, `@param` lines are kept, and the signature
+is the parameters as written. When a name is documented twice, once on the
+`Helpers` interface and once on the function that implements it, the function
+wins: it cannot drift from what runs. `src/lib/paths.ts` owns both the source
+list and where the JSON lands, and `test/unit/api.test.ts` pins every form the
+parser accepts and every near miss it must ignore.
 
 ## Layering rules
 
