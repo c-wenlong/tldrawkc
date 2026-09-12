@@ -127,6 +127,20 @@ describe("snippetFailureReport", () => {
     expect(snippetFailureReport("boom", undefined, SOURCE)).toBe("boom");
   });
 
+  it("drops the repeated headline even when the message itself carried a frame", () => {
+    const message = "boom at snippet.js:5:1";
+    const report = snippetFailureReport(
+      message,
+      [`Error: ${message}`, "    at eval (snippet.js:5:1)"].join("\n"),
+      SOURCE,
+    ).split("\n");
+
+    expect(report[0]).toBe("boom at snippet.js:3:1");
+    expect(report[1]).toBe("snippet.js:3:1  x.boom()");
+    expect(report[2]).toBe("    at eval (snippet.js:3:1)");
+    expect(report).toHaveLength(3);
+  });
+
   it("falls back to a frame carried in the message when the stack has none", () => {
     const report = snippetFailureReport("boom at snippet.js:4:1", "", SOURCE).split("\n");
     expect(report[0]).toBe("boom at snippet.js:2:1");

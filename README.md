@@ -183,11 +183,13 @@ decorative line pointing at nothing survives the pass. A container drawn by
 `overlapping-shapes`, `empty-label` and `arrow-crosses-shape`, because covering
 its members and being crossed by arrows is what a container is for.
 
-`arrow-crosses-shape` reads tldraw's own arrow geometry, so an elbow route is
-tested leg by leg and an arc as the polyline tldraw samples it into. A shape
-counts as crossed only once the line is more than 4 page units inside it, which
-is about the combined width of the two strokes: an arrow that touches a box is
-two lines meeting, not a line disappearing behind one.
+`arrow-crosses-shape` reads tldraw's own geometry on both sides, so an elbow
+route is tested leg by leg, an arc as the polyline tldraw samples it into, and a
+diamond as a diamond rather than as the page box whose four corners it leaves
+empty. A shape counts as crossed only once the line is more than 4 page units
+inside its outline, which is about the combined width of the two strokes: an
+arrow that touches a box is two lines meeting, not a line disappearing behind
+one.
 
 ### The helper reference
 

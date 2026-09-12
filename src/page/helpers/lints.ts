@@ -57,6 +57,15 @@ export interface LintShape {
    * when the geometry could not be read.
    */
   points?: readonly { x: number; y: number }[];
+  /**
+   * The shape's own rendered outline in page coordinates, again from tldraw's
+   * geometry: four corners for a rectangle, four for a diamond, an ellipse
+   * sampled into a polygon. `arrow-crosses-shape` prefers this to `bounds`,
+   * because a diamond's page box has four empty corners an arrow can pass
+   * through without touching the shape. Absent means fall back to `bounds`,
+   * which is right whenever the shape is a rectangle.
+   */
+  outline?: readonly { x: number; y: number }[];
   /** The fill style (`none`, `solid`, ...). Geo shapes only. */
   fill?: string;
   /**
@@ -140,10 +149,10 @@ export const OVERLAP_AREA_FRACTION = 0.1;
  * also absorbs the error in sampling an arc: the rule walks the arc as a
  * polyline, so a chord can cut a corner the curve itself clears.
  *
- * It is a threshold on depth, not on length: the shape's page box is shrunk by
- * this much on every side and the arrow has to cross what is left. Anything
- * larger starts hiding a real crossing of a small box, which is the finding
- * this rule exists for.
+ * It is a threshold on depth, not on length: the shape's outline is eroded by
+ * this much and the arrow has to cross what is left. Anything larger starts
+ * hiding a real crossing of a small box, which is the finding this rule exists
+ * for.
  */
 export const ARROW_CROSSING_TOLERANCE = 4;
 
@@ -278,6 +287,125 @@ export function segmentCrossesRect(
   return t1 > t0;
 }
 
+/** A point, in page coordinates. */
+interface Point {
+  x: number;
+  y: number;
+}
+
+/**
+ * The convex hull of a set of points, anticlockwise, by Andrew's monotone
+ * chain.
+ *
+ * The hull rather than the outline itself, because {@link segmentCrossesHull}
+ * erodes a shape by intersecting one half-plane per edge, and that is only the
+ * true inward offset when the polygon is convex. Every geo tldraw can draw
+ * that this tool produces is convex: a rectangle, a diamond, an oval, an
+ * ellipse, a hexagon. The three that are not, `star`, `cloud` and `heart`, are
+ * judged on their silhouette instead, so an arrow threaded through a star's
+ * notch is reported. That over-reports on a shape nothing here draws, and it
+ * is still far closer than the page box, whose corners a diamond leaves
+ * completely empty.
+ */
+export function convexHull(points: readonly Point[]): Point[] {
+  const sorted = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+  if (sorted.length < 3) return sorted;
+
+  const cross = (o: Point, a: Point, b: Point): number =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+  const half = (input: readonly Point[]): Point[] => {
+    const chain: Point[] = [];
+    for (const point of input) {
+      while (chain.length >= 2) {
+        const a = chain[chain.length - 2];
+        const b = chain[chain.length - 1];
+        if (!a || !b || cross(a, b, point) > 0) break;
+        chain.pop();
+      }
+      chain.push(point);
+    }
+    chain.pop();
+    return chain;
+  };
+
+  const hull = [...half(sorted), ...half([...sorted].reverse())];
+  return hull.length >= 3 ? hull : sorted;
+}
+
+/**
+ * Does the segment `a`-`b` reach more than `inset` inside the convex polygon?
+ *
+ * The same parametric clip as {@link segmentCrossesRect}, generalised from
+ * four axis-aligned half-planes to one per edge, each pushed `inset` inward.
+ * For a convex polygon that intersection is exactly the polygon eroded by
+ * `inset`, so "more than four units inside the shape" is the literal question
+ * being asked rather than an approximation of it. With an axis-aligned
+ * rectangle and the same inset it agrees with `segmentCrossesRect` exactly.
+ *
+ * Inward is decided against the polygon's own centroid rather than assumed
+ * from the winding order, so a hull that comes back clockwise is not read
+ * inside out.
+ */
+export function segmentCrossesHull(
+  a: Point,
+  b: Point,
+  hull: readonly Point[],
+  inset: number,
+): boolean {
+  if (hull.length < 3) return false;
+
+  let cx = 0;
+  let cy = 0;
+  for (const point of hull) {
+    cx += point.x;
+    cy += point.y;
+  }
+  const centre = { x: cx / hull.length, y: cy / hull.length };
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+
+  for (let i = 0; i < hull.length; i++) {
+    const from = hull[i];
+    const to = hull[(i + 1) % hull.length];
+    if (!from || !to) return false;
+
+    let nx = -(to.y - from.y);
+    let ny = to.x - from.x;
+    const length = Math.hypot(nx, ny);
+    // A repeated vertex contributes no edge and no constraint.
+    if (length === 0) continue;
+    nx /= length;
+    ny /= length;
+    if (nx * (centre.x - from.x) + ny * (centre.y - from.y) < 0) {
+      nx = -nx;
+      ny = -ny;
+    }
+
+    // How far inside this edge the segment starts, and how fast that changes.
+    const q = nx * (a.x - from.x) + ny * (a.y - from.y) - inset;
+    const p = nx * dx + ny * dy;
+    if (p === 0) {
+      // Parallel to this edge. Strictly, so a segment lying exactly on the
+      // eroded boundary has no depth inside and is not a crossing.
+      if (q <= 0) return false;
+      continue;
+    }
+    const r = -q / p;
+    if (p > 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+  }
+  return t1 > t0;
+}
+
 /** Does any leg of a path run through the rectangle? */
 function pathCrossesRect(
   points: readonly { x: number; y: number }[],
@@ -288,6 +416,21 @@ function pathCrossesRect(
     const b = points[i];
     if (!a || !b) continue;
     if (segmentCrossesRect(a, b, rect)) return true;
+  }
+  return false;
+}
+
+/** Does any leg of a path reach more than `inset` inside the convex polygon? */
+function pathCrossesHull(
+  points: readonly Point[],
+  hull: readonly Point[],
+  inset: number,
+): boolean {
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) continue;
+    if (segmentCrossesHull(a, b, hull, inset)) return true;
   }
   return false;
 }
@@ -309,6 +452,12 @@ function pathCrossesRect(
  * frame; and either shape carrying this rule in `meta.lintIgnore`. Only geo
  * and note shapes count as something to run through, because a text shape has
  * no outline for a line to disappear behind.
+ *
+ * The test is against the shape's own outline, eroded by the tolerance, and
+ * not against its page box: a diamond's box has four empty corners, and an
+ * arrow routed through one of them touches nothing. The page box is still the
+ * first thing checked, because it rejects almost every pair in one comparison
+ * and anything it rejects the eroded outline would reject too.
  *
  * See {@link ARROW_CROSSING_TOLERANCE} for how far in is far enough.
  */
@@ -335,6 +484,16 @@ export function arrowCrossesShape(
       !isLintIgnored(shape, "arrow-crosses-shape"),
   );
 
+  // One hull per candidate, not one per arrow and candidate: a page with
+  // seventy arrows would otherwise rebuild the same thirty polygons seventy
+  // times over.
+  const hulls = new Map<string, Point[]>();
+  for (const shape of crossable) {
+    const outline = shape.outline;
+    if (!outline || outline.length < 3) continue;
+    hulls.set(shape.id, convexHull(outline));
+  }
+
   const lints: Lint[] = [];
   for (const arrow of shapes) {
     if (arrow.type !== "arrow") continue;
@@ -351,6 +510,8 @@ export function arrowCrossesShape(
       const inner = insetRect(bounds, ARROW_CROSSING_TOLERANCE);
       if (!inner) continue;
       if (!pathCrossesRect(points, inner)) continue;
+      const hull = hulls.get(shape.id);
+      if (hull && !pathCrossesHull(points, hull, ARROW_CROSSING_TOLERANCE)) continue;
       lints.push({
         rule: "arrow-crosses-shape",
         shapeIds: [arrow.id, shape.id],

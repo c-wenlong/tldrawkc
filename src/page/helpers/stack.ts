@@ -122,9 +122,12 @@ export function snippetFailureReport(
   if (at) parts.push(snippetPointer(source, at));
 
   // The stack's own first line repeats the message, so drop it when it does.
+  // Against `head` and not `message`: both strings have been through the same
+  // rewrite, and comparing the adjusted line to the raw one misses whenever the
+  // message itself carried a frame, which leaves the headline printed twice.
   const lines = frames === "" ? [] : frames.split("\n");
   const first = lines[0] ?? "";
-  const body = (first.includes(message) ? lines.slice(1) : lines).join("\n").trimEnd();
+  const body = (first.includes(head) ? lines.slice(1) : lines).join("\n").trimEnd();
   if (body !== "") parts.push(body);
 
   return parts.join("\n");

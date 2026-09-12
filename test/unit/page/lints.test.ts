@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   ARROW_CROSSING_TOLERANCE,
   arrowCrossesShape,
+  convexHull,
   emptyLabels,
   friendlessArrows,
   insetRect,
@@ -24,6 +25,7 @@ import {
   overlappingShapes,
   overlappingText,
   runLints,
+  segmentCrossesHull,
   segmentCrossesRect,
   unreadableLabels,
   type LintBinding,
@@ -115,6 +117,28 @@ const obstacle = (
   bounds: { x: number; y: number; w: number; h: number },
   meta?: Record<string, unknown>,
 ): LintShape => ({ id, type: "geo", bounds, ...(meta ? { meta } : {}) });
+
+/** The four corners of a rect, the outline tldraw reports for a rectangle. */
+const corners = (b: { x: number; y: number; w: number; h: number }) => [
+  { x: b.x, y: b.y },
+  { x: b.x + b.w, y: b.y },
+  { x: b.x + b.w, y: b.y + b.h },
+  { x: b.x, y: b.y + b.h },
+];
+
+/** A diamond: the four edge midpoints of its page box, as tldraw draws it. */
+const diamond = (id: string, b: { x: number; y: number; w: number; h: number }): LintShape => ({
+  id,
+  type: "geo",
+  geo: "diamond",
+  bounds: b,
+  outline: [
+    { x: b.x + b.w / 2, y: b.y },
+    { x: b.x + b.w, y: b.y + b.h / 2 },
+    { x: b.x + b.w / 2, y: b.y + b.h },
+    { x: b.x, y: b.y + b.h / 2 },
+  ],
+});
 
 /** An arrow carrying a rendered path, in page coordinates. */
 const routed = (
@@ -290,6 +314,65 @@ describe("arrow-crosses-shape", () => {
     expect(arrowCrossesShape(shapes, BOUND)).toEqual([]);
   });
 
+  it("lets an arrow through the empty corner of a diamond's page box", () => {
+    // The diamond spans x 180..280, y 0..60, so its page box's top-left corner
+    // is empty. A line clipping that corner crosses the box and misses the
+    // shape, which is the whole reason the rule reads the outline.
+    const shapes = [
+      LEFT,
+      RIGHT,
+      diamond("shape:choice", { x: 180, y: 0, w: 100, h: 60 }),
+      routed("shape:x", [
+        { x: 100, y: 2 },
+        { x: 400, y: 2 },
+      ]),
+    ];
+    expect(arrowCrossesShape(shapes, BOUND)).toEqual([]);
+  });
+
+  it("still flags an arrow through the middle of the same diamond", () => {
+    const shapes = [
+      LEFT,
+      RIGHT,
+      diamond("shape:choice", { x: 180, y: 0, w: 100, h: 60 }),
+      routed("shape:x", [
+        { x: 100, y: 30 },
+        { x: 400, y: 30 },
+      ]),
+    ];
+    expect(arrowCrossesShape(shapes, BOUND).map((lint) => lint.shapeIds[1])).toEqual([
+      "shape:choice",
+    ]);
+  });
+
+  it("agrees with the page box when the outline is the page box", () => {
+    const bounds = { x: 180, y: 0, w: 100, h: 60 };
+    const path = [
+      { x: 100, y: 2 },
+      { x: 400, y: 2 },
+    ];
+    // The same line that misses the diamond crosses a rectangle of the same
+    // size, two units in, which is inside the tolerance, so neither fires.
+    const shallow: LintShape[] = [
+      LEFT,
+      RIGHT,
+      { id: "shape:box", type: "geo", bounds, outline: corners(bounds) },
+      routed("shape:x", path),
+    ];
+    expect(arrowCrossesShape(shallow, BOUND)).toEqual([]);
+
+    const deep: LintShape[] = [
+      LEFT,
+      RIGHT,
+      { id: "shape:box", type: "geo", bounds, outline: corners(bounds) },
+      routed("shape:x", [
+        { x: 100, y: 30 },
+        { x: 400, y: 30 },
+      ]),
+    ];
+    expect(arrowCrossesShape(deep, BOUND)).toHaveLength(1);
+  });
+
   it("flags a note, which is an outline a line can hide behind", () => {
     const note: LintShape = {
       id: "shape:aside",
@@ -324,6 +407,75 @@ describe("segmentCrossesRect", () => {
     expect(segmentCrossesRect({ x: -50, y: 50 }, { x: -10, y: 50 }, rect)).toBe(false);
     expect(segmentCrossesRect({ x: -50, y: 0 }, { x: 150, y: 0 }, rect)).toBe(false);
     expect(segmentCrossesRect({ x: -50, y: -50 }, { x: 0, y: 0 }, rect)).toBe(false);
+  });
+});
+
+describe("convexHull", () => {
+  it("keeps the corners and drops a point inside them", () => {
+    const hull = convexHull([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+      { x: 0, y: 10 },
+      { x: 5, y: 5 },
+    ]);
+    expect(hull).toHaveLength(4);
+    expect(hull).toEqual(
+      expect.arrayContaining([
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ]),
+    );
+  });
+
+  it("hands back anything it cannot make a polygon of", () => {
+    expect(convexHull([])).toEqual([]);
+    expect(convexHull([{ x: 1, y: 1 }])).toEqual([{ x: 1, y: 1 }]);
+    const collinear = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 2, y: 0 },
+    ];
+    expect(convexHull(collinear)).toHaveLength(3);
+  });
+});
+
+describe("segmentCrossesHull", () => {
+  const square = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+
+  it("matches segmentCrossesRect on an axis-aligned box at the same inset", () => {
+    const rect = { x: 0, y: 0, w: 100, h: 100 };
+    const cases: [{ x: number; y: number }, { x: number; y: number }][] = [
+      [{ x: -50, y: 50 }, { x: 150, y: 50 }],
+      [{ x: -50, y: 2 }, { x: 150, y: 2 }],
+      [{ x: -50, y: 150 }, { x: 150, y: 150 }],
+      [{ x: 20, y: 20 }, { x: 80, y: 80 }],
+      [{ x: -50, y: 4 }, { x: 150, y: 4 }],
+    ];
+    for (const [a, b] of cases) {
+      expect(
+        segmentCrossesHull(a, b, square, 4),
+        `${JSON.stringify(a)} to ${JSON.stringify(b)}`,
+      ).toBe(segmentCrossesRect(a, b, insetRect(rect, 4) ?? rect));
+    }
+  });
+
+  it("reads the winding order from the shape rather than assuming one", () => {
+    const clockwise = [...square].reverse();
+    expect(segmentCrossesHull({ x: -50, y: 50 }, { x: 150, y: 50 }, clockwise, 4)).toBe(true);
+    expect(segmentCrossesHull({ x: -50, y: 150 }, { x: 150, y: 150 }, clockwise, 4)).toBe(false);
+  });
+
+  it("is false for a polygon with no area to speak of", () => {
+    expect(segmentCrossesHull({ x: 0, y: 0 }, { x: 10, y: 0 }, square.slice(0, 2), 4)).toBe(false);
+    expect(segmentCrossesHull({ x: 50, y: 50 }, { x: 60, y: 50 }, square, 60)).toBe(false);
   });
 });
 
