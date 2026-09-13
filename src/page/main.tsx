@@ -1,10 +1,12 @@
 /**
- * The headless canvas.
+ * The page, in both of its modes.
  *
- * One `<Tldraw>` with the UI hidden, because in the normal case nobody is
- * looking at this page: Node drives it through the bridge and reads a PNG
- * back. The headed human view (`serve`) is a separate mount, `mirror.tsx`,
- * and arrives in phase 4.
+ * One `index.html` and one entry, because the two modes share the fonts, the
+ * helpers and the bridge, and a second bundle would be a second thing to keep
+ * in step. The query string picks: `?mirror=1` mounts the human view from
+ * `mirror.tsx`, and anything else mounts the headless canvas, one `<Tldraw>`
+ * with the UI hidden, because in that case nobody is looking at this page and
+ * Node drives it through the bridge.
  */
 
 import { StrictMode } from "react";
@@ -13,6 +15,7 @@ import { Tldraw, type Editor } from "tldraw";
 import { getAssetUrlsByImport } from "@tldraw/assets/imports.vite";
 
 import { installBridge } from "./bridge.js";
+import { Mirror } from "./mirror.js";
 import "tldraw/tldraw.css";
 
 /**
@@ -33,11 +36,18 @@ function mount(editor: Editor): void {
   installBridge(editor);
 }
 
+/** `?mirror=1`, the one query this page reads. */
+const isMirror = new URLSearchParams(window.location.search).get("mirror") === "1";
+
 const root = document.getElementById("root");
 if (!root) throw new Error("tldrawkc page: #root is missing from index.html");
 
 createRoot(root).render(
   <StrictMode>
-    <Tldraw hideUi assetUrls={assetUrls} onMount={mount} />
+    {isMirror ? (
+      <Mirror assetUrls={assetUrls} />
+    ) : (
+      <Tldraw hideUi assetUrls={assetUrls} onMount={mount} />
+    )}
   </StrictMode>,
 );
