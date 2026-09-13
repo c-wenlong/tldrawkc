@@ -254,6 +254,8 @@ an accidental nudge costs nothing until you save it. A reload that landed on
 top of unsaved edits says so in a banner. There is no sync server and none is
 planned.
 
+![The mirror tab: tldraw's full UI around a canvas with two boxes, alpha and beta, joined by a bound arrow. Alpha has just been dragged down and right and is still selected; the arrow has re-routed to follow it. An overlay in the top right reads p4.tldr, Saved 21:20:11, watching for changes](docs/serve-mirror.png)
+
 The port is 7240 by default, so the tab can be bookmarked, and falls back to a
 free one when something else has it, saying which. The routes exist only while
 `serve` is running: a headless verb's server has no `/api/*` at all, because a
