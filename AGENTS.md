@@ -509,6 +509,42 @@ Collected as they are found, so they are not rediscovered.
   `props.h`. `respaceRanks` in the mermaid importer exists entirely because of
   this: the parser sizes boxes by counting characters, and the real heights
   only exist after the shapes do.
+- **`store.listen` is flushed on the next frame, not with the change.** The
+  store's history reactor schedules with `throttleToNextFrame`, so a listener
+  hears about a mutation a frame after it happened. Any code that clears a
+  flag "right after" a write it made itself is wrong: the listener has not run
+  yet, and it sets the flag straight back. The mirror's dirty flag was written
+  that way first and reported every reload as an unsaved local edit.
+- **`loadSnapshot` writes as `source: 'user'` unless you say otherwise.** It
+  is an ordinary store write, so a listener filtered to `source: 'user'`
+  cannot tell a load from a human. `editor.store.mergeRemoteChanges(() =>
+  loadSnapshot(...))` tags the whole load `remote`, which is what mirror mode
+  uses to keep a poll's reload out of its own dirty flag. The nesting is safe:
+  `mergeRemoteChanges` refuses to start *inside* an atomic op, but
+  `loadSnapshot`'s own `store.atomic` nested inside it is fine.
+- **`user` is a document-scoped record, and the full UI creates one on
+  mount.** `{ source: 'user', scope: 'document' }` therefore fires once on
+  every mirror tab before anybody touches anything, with a `user:...` record
+  carrying a name and a cursor colour. `comment` is document-scoped too.
+  Filter on `typeName` (`shape`, `binding`, `page`, `asset`, `document`) when
+  what you mean is "the drawing changed", because scope alone does not mean
+  it.
+- **`serializeTldrawJson` writes `editor.store.allRecords()`, every scope.** A
+  `.tldr` this tool writes carries `camera`, `instance`, `instance_page_state`
+  and `pointer` records alongside the shapes, from the CLI and from the mirror
+  alike. Harmless, because `load` reads back through
+  `getStoreSnapshot("document")` and drops them, but it is why a saved file
+  has record types the document scope has never heard of.
+- **A snapshot with a `session` key moves the camera.** `loadSnapshot(store,
+  { document })` keeps the viewer's camera, selection and current page;
+  adding `session` replaces all three with whoever wrote the file. Mirror mode
+  passes `document` alone for exactly that reason, and calls `zoomToFit()`
+  once, on the first load only.
+- **tldraw's own UI does not bind Cmd+S.** The `save-file-copy` action lives
+  in the tldraw.com app, not in the library, so mirror mode's handler has
+  nothing to fight. It still listens on `window` in the capture phase and
+  calls `preventDefault`, because the browser's own "save this page" dialog is
+  the thing that would otherwise open.
 
 ## Where the design lives
 
