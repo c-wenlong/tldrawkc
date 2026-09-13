@@ -10,6 +10,7 @@
  *   tldrawkc meta set <file.tldr>     stamp a topic on an existing document
  *   tldrawkc export <file.tldr> ...   the SVG or PNG that gets committed
  *   tldrawkc from-mermaid <file.tldr> lift a mermaid flowchart onto the canvas
+ *   tldrawkc serve <file.tldr>        mirror a document in a real browser tab
  *   tldrawkc api                      what a snippet can call
  *   tldrawkc doctor                   is this machine able to run the tool
  *   tldrawkc help                     usage for every command
@@ -42,6 +43,7 @@ import { readApiReference, type HelperDoc } from "../lib/api.js";
 import { list, type ListResult } from "../lib/list.js";
 import { setMeta, type DiagramMeta, type MetaPatch, type SetMetaResult } from "../lib/meta.js";
 import { doctor, type DoctorReport } from "../lib/doctor.js";
+import { serve, type ServeHandle } from "../lib/serve.js";
 import { isTldrawkcError, SnippetError, UsageError } from "../lib/errors.js";
 import { readText } from "../lib/files.js";
 import { resolveOutputPath } from "../lib/paths.js";
@@ -54,6 +56,20 @@ import {
   type CommandOptions,
   type GlobalOptions,
 } from "./args.js";
+
+/**
+ * The "not built yet" block, or nothing when everything specified is built.
+ *
+ * An empty heading followed by no commands reads like a bug in the help text,
+ * which is what it looked like the moment `serve` shipped and left
+ * `PLANNED_COMMANDS` empty.
+ */
+function plannedSection(): string {
+  const entries = Object.entries(PLANNED_COMMANDS);
+  if (entries.length === 0) return "";
+  const lines = entries.map(([name, phase]) => `  ${name.padEnd(30)} ${phase}`).join("\n");
+  return `Planned (specified in CLI.md, not built yet)\n${lines}\n\n`;
+}
 
 const USAGE = `tldrawkc <command> [file] [options]
 
@@ -91,16 +107,14 @@ Commands
       --source <path.mmd>        the flowchart, or - to read stdin
       --append                   add to an existing document instead of refusing
       --shot <out.png>           write a PNG afterwards
+  serve <file.tldr>              mirror the document in a real browser tab until Ctrl+C
+      --port <n>                 port to listen on (default 7240, a free one if taken)
+      --no-open                  print the URL instead of opening a browser
   api                            what a snippet can call, from the helpers' own JSDoc
   doctor                         check node, the page bundle, Chromium and the page
   help                           this text
 
-Planned (specified in CLI.md, not built yet)
-${Object.entries(PLANNED_COMMANDS)
-  .map(([name, phase]) => `  ${name.padEnd(30)} ${phase}`)
-  .join("\n")}
-
-Global options
+${plannedSection()}Global options
   --json                         print one JSON object and nothing else
   --headed                       show the Chromium window (debugging)
   --quiet                        suppress the human summary
@@ -194,7 +208,7 @@ function printRun(result: RunResult, allowLints: boolean): void {
 }
 
 async function runDoctor(globals: GlobalOptions): Promise<number> {
-  const report = await doctor({ chromium: globals.chromium });
+  const report = await doctor({ chromium: globals.chromium, headed: globals.headed });
   if (globals.json) printJson(report);
   else if (!globals.quiet) printDoctor(report);
   return report.ok ? EXIT.ok : EXIT.usage;
@@ -584,6 +598,63 @@ async function readSourceFile(input: string): Promise<string> {
   return text;
 }
 
+/**
+ * The one line a human sees while `serve` is running.
+ *
+ * The URL first, because it is the thing to click or paste. A port fallback is
+ * on the same line and only when it happened: a tab bookmarked on 7240 that
+ * opens on 51234 today should say why without a second line of output for
+ * every normal run.
+ */
+function serveLine(handle: ServeHandle): string {
+  const fallback = handle.fellBackFrom === null
+    ? ""
+    : `  (port ${String(handle.fellBackFrom)} was taken)`;
+  return `${handle.url}${fallback}  Ctrl+C to stop`;
+}
+
+/**
+ * Resolve on the first SIGINT or SIGTERM.
+ *
+ * Layering rule 7's other half: `serve` is the long-lived command, so
+ * something has to hold the process open and then let go. Installing a
+ * listener is also what stops Node's default SIGINT handling from killing the
+ * process before the server is closed.
+ */
+function untilSignal(): Promise<NodeJS.Signals> {
+  return new Promise((resolve) => {
+    const onSignal = (signal: NodeJS.Signals): void => {
+      process.removeListener("SIGINT", onSignal);
+      process.removeListener("SIGTERM", onSignal);
+      resolve(signal);
+    };
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+  });
+}
+
+async function runServe(
+  file: string,
+  globals: GlobalOptions,
+  options: CommandOptions,
+): Promise<number> {
+  const handle = await serve({
+    file,
+    port: options.port,
+    open: options.open,
+    // Printed from the ready hook rather than after the await, so the URL is
+    // on stdout before the browser window opens over the terminal.
+    onReady: (ready) => {
+      if (globals.json) printJson({ url: ready.url, port: ready.port, file: ready.file });
+      else if (!globals.quiet) out(serveLine(ready));
+    },
+  });
+
+  await untilSignal();
+  await handle.close();
+  return EXIT.ok;
+}
+
 /** One block per helper: the signature, the summary, then each example. */
 function printApi(docs: HelperDoc[]): void {
   docs.forEach((doc, index) => {
@@ -634,6 +705,8 @@ async function main(): Promise<number> {
       return await runExport(file, globals, options);
     case "from-mermaid":
       return await runFromMermaid(file, globals, options);
+    case "serve":
+      return await runServe(file, globals, options);
     case "api":
       return await runApi(globals);
     default:
