@@ -176,6 +176,16 @@ describe("spliceFontFaces", () => {
 });
 
 describe("subsetSvgFonts", () => {
+  it("subsets by default, because an absent option is not an off switch", async () => {
+    // The library's callers are not only the CLI. A caller that has never
+    // heard of this option has to get the documented behaviour, not the
+    // 450 kB file that an `undefined` would otherwise hand back.
+    const svg = svgWith([face("tldraw_draw", "AAAA")], "<text>x</text>");
+    const result = await subsetSvgFonts(svg, {});
+    expect(result.subset).toBe(true);
+    expect(result.faces.map((f) => f.action)).toEqual(["dropped"]);
+  });
+
   it("hands the SVG back untouched when subsetting is off", async () => {
     const svg = svgWith([face("tldraw_draw", "AAAA")], "<text>x</text>");
     const result = await subsetSvgFonts(svg, { enabled: false });

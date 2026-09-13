@@ -74,11 +74,15 @@ export interface RunOptions extends CommonOptions {
   /**
    * Cut the SVG's inlined fonts down to the glyphs it draws.
    *
-   * True by default. False for `--no-subset-fonts`, which is what a diagram
-   * destined for a later hand edit wants: a subset font has no glyph for a
-   * letter the drawing does not already contain.
+   * On unless it is explicitly `false`, which is what `--no-subset-fonts`
+   * passes and what a diagram destined for a later hand edit wants: a subset
+   * font has no glyph for a letter the drawing does not already contain.
+   *
+   * Optional, and absent means on. A required field here would stop every
+   * existing caller of the library compiling, and would leave a JavaScript
+   * caller that omits it quietly exporting whole fonts.
    */
-  subsetFonts: boolean;
+  subsetFonts?: boolean | undefined;
   /** Start from an empty document when the file does not exist. */
   create: boolean;
   /** False for `--no-save`: run and export, leave the file alone. */
@@ -376,9 +380,9 @@ export interface ExportOptions extends CommonOptions {
   /**
    * Cut the SVG's inlined fonts down to the glyphs it draws.
    *
-   * True by default. False for `--no-subset-fonts`; see {@link RunOptions}.
+   * On unless explicitly `false`; see {@link RunOptions.subsetFonts}.
    */
-  subsetFonts: boolean;
+  subsetFonts?: boolean | undefined;
   /** Frame only these shapes. Empty or absent means every shape on the page. */
   ids?: string[] | undefined;
   page?: string | undefined;
@@ -1017,7 +1021,7 @@ async function writeSvg(
   target: string,
   raw: string,
   meta: DiagramMeta | null,
-  subsetFonts: boolean,
+  subsetFonts: boolean | undefined,
   size: { width: number; height: number },
 ): Promise<ExportedSvg> {
   const stamped = stampSvg(raw, meta);

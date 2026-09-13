@@ -75,8 +75,14 @@ export interface FontFaceOutcome {
 }
 
 export interface SubsetFontsOptions {
-  /** False for `--no-subset-fonts`: hand the SVG straight back. */
-  enabled: boolean;
+  /**
+   * False for `--no-subset-fonts`: hand the SVG straight back.
+   *
+   * Absent means on. Only an explicit `false` turns it off, so a caller that
+   * has not heard of this option gets the documented behaviour rather than
+   * silently losing the subsetting to an `undefined`.
+   */
+  enabled?: boolean | undefined;
 }
 
 export interface SubsetFontsResult {
@@ -102,7 +108,7 @@ export async function subsetSvgFonts(
   svg: string,
   options: SubsetFontsOptions,
 ): Promise<SubsetFontsResult> {
-  if (!options.enabled) return { svg, subset: false, warnings: [], faces: [] };
+  if (options.enabled === false) return { svg, subset: false, warnings: [], faces: [] };
 
   let faces: InlinedFontFace[];
   try {
