@@ -23,6 +23,8 @@ import {
   parseTldrawJsonFile,
   serializeTldrawJson,
   type Editor,
+  type RecordsDiff,
+  type TLRecord,
 } from "tldraw";
 
 import { installBridge } from "./bridge.js";
@@ -96,6 +98,33 @@ interface Runtime {
   saving: boolean;
 }
 
+/**
+ * The record types that are the drawing.
+ *
+ * Scope is not enough to tell an edit from the UI waking up. `user` is a
+ * **document-scoped** record in tldraw 5, and the full UI creates one
+ * (`user:...`, a name and a cursor colour) the moment it mounts, so a
+ * listener filtered only to `{ source: 'user', scope: 'document' }` sees one
+ * change on every fresh mirror tab and calls a canvas nobody has touched
+ * dirty. `comment` is document-scoped for the same reason and is not a
+ * drawing either.
+ */
+const DRAWING_TYPES = new Set(["shape", "binding", "page", "asset", "document"]);
+
+/** True when a change touched the drawing rather than the UI's own bookkeeping. */
+function isDrawingEdit(changes: RecordsDiff<TLRecord>): boolean {
+  for (const record of Object.values(changes.added)) {
+    if (DRAWING_TYPES.has(record.typeName)) return true;
+  }
+  for (const [, after] of Object.values(changes.updated)) {
+    if (DRAWING_TYPES.has(after.typeName)) return true;
+  }
+  for (const record of Object.values(changes.removed)) {
+    if (DRAWING_TYPES.has(record.typeName)) return true;
+  }
+  return false;
+}
+
 function clockTime(date: Date): string {
   const pad = (value: number): string => String(value).padStart(2, "0");
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
@@ -155,26 +184,46 @@ function applyDocument(editor: Editor, tldr: string): void {
   });
 }
 
+/**
+ * What the overlay says, and whether it says it in red.
+ *
+ * A failed save outranks everything the poll has to report, and it is sticky:
+ * the poll runs every second, so a save error written into the same line as
+ * the connection state would be gone before anyone read it. Only the next
+ * successful save clears it.
+ */
+function overlayDetail(
+  status: Status,
+  saveError: string | null,
+  dirty: boolean,
+): { text: string; bad: boolean } {
+  if (saveError !== null) return { text: `not saved: ${saveError}`, bad: true };
+  switch (status.kind) {
+    case "error":
+      return { text: status.message, bad: true };
+    case "unreachable":
+      return { text: "server unreachable", bad: true };
+    case "saving":
+      return { text: "saving...", bad: false };
+    case "loading":
+      return { text: "loading...", bad: false };
+    case "watching":
+      return {
+        text: dirty ? "unsaved edits, Cmd+S to save" : "watching for changes",
+        bad: false,
+      };
+  }
+}
+
 function Overlay(props: {
   file: string;
   status: Status;
+  saveError: string | null;
   lastSaveAt: string | null;
   dirty: boolean;
 }): React.JSX.Element {
-  const { file, status, lastSaveAt, dirty } = props;
-  const detail =
-    status.kind === "error"
-      ? status.message
-      : status.kind === "unreachable"
-        ? "server unreachable"
-        : status.kind === "saving"
-          ? "saving..."
-          : status.kind === "loading"
-            ? "loading..."
-            : dirty
-              ? "unsaved edits, Cmd+S to save"
-              : "watching for changes";
-  const bad = status.kind === "error" || status.kind === "unreachable";
+  const { file, status, saveError, lastSaveAt, dirty } = props;
+  const { text: detail, bad } = overlayDetail(status, saveError, dirty);
   return (
     <div
       data-testid="mirror-overlay"
@@ -260,6 +309,7 @@ export function Mirror(props: {
   const [file, setFile] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "loading" });
   const [lastSaveAt, setLastSaveAt] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [banner, setBanner] = useState(false);
 
@@ -278,14 +328,16 @@ export function Mirror(props: {
     setEditor(mounted);
   }, []);
 
-  // The dirty flag. Filtered to the human's own document edits, which is what
-  // makes a reload over them worth a banner; `source: 'remote'` is how
-  // `applyDocument` tags its own writes, and session-scoped records (camera,
-  // selection) are not edits to the file.
+  // The dirty flag. Filtered to the human's own edits to the drawing, which is
+  // what makes a reload over them worth a banner: `source: 'remote'` is how
+  // `applyDocument` tags its own writes, session-scoped records (camera,
+  // selection) are not edits to the file, and `isDrawingEdit` drops the
+  // document-scoped records the UI keeps for itself.
   useEffect(() => {
     if (!editor) return;
     return editor.store.listen(
-      () => {
+      (entry) => {
+        if (!isDrawingEdit(entry.changes)) return;
         runtime.current.dirty = true;
         setDirty(true);
       },
@@ -363,17 +415,24 @@ export function Mirror(props: {
         runtime.current.mtimeMs = result.mtimeMs;
         runtime.current.dirty = false;
         setDirty(false);
+        setSaveError(null);
         const at = clockTime(new Date());
         runtime.current.lastSaveAt = at;
         setLastSaveAt(at);
         setStatus({ kind: "watching" });
       } catch (cause) {
-        // The dirty flag stays set: the edits are still only in this tab.
-        setStatus(
+        // The dirty flag stays set: the edits are still only in this tab. The
+        // message is sticky, because the poll would overwrite the status line
+        // a second later and the person needs to know the file was not
+        // written.
+        setSaveError(
           cause instanceof TypeError
-            ? { kind: "unreachable" }
-            : { kind: "error", message: cause instanceof Error ? cause.message : String(cause) },
+            ? "server unreachable"
+            : cause instanceof Error
+              ? cause.message
+              : String(cause),
         );
+        setStatus({ kind: "watching" });
       } finally {
         runtime.current.saving = false;
       }
@@ -420,6 +479,7 @@ export function Mirror(props: {
       <Overlay
         file={file ? basename(file) : ""}
         status={status}
+        saveError={saveError}
         lastSaveAt={lastSaveAt}
         dirty={dirty}
       />
