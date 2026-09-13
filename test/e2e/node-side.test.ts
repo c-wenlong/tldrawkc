@@ -62,6 +62,7 @@ function options(overrides: Partial<Parameters<typeof run>[0]> = {}) {
     file,
     create: true,
     save: true,
+    subsetFonts: true,
     allowLints: false,
     padding: 32,
     pixelRatio: 2,
@@ -318,6 +319,7 @@ describe("export", () => {
       png: "out.png",
       padding: 32,
       pixelRatio: 2,
+      subsetFonts: true,
       cwd: dir,
       pageRoot: STAND_IN_PAGE,
     });
@@ -339,6 +341,7 @@ describe("export", () => {
       png: "blocked.png",
       padding: 32,
       pixelRatio: 2,
+      subsetFonts: true,
       cwd: dir,
       pageRoot: STAND_IN_PAGE,
     }).catch((e: unknown) => e);

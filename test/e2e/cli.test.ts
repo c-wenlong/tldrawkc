@@ -97,6 +97,8 @@ interface RunJson {
   lints: Array<{ rule: string; shapeIds: string[]; message: string; severity?: string }>;
   shot: string | null;
   svg: string | null;
+  svgBytes: number | null;
+  svgFontsSubset: boolean | null;
   ms: number;
 }
 
@@ -137,12 +139,19 @@ describe("run", () => {
       "lints",
       "shot",
       "svg",
+      // Additive, after `svg` and before `ms`: the size of the SVG and
+      // whether its fonts were subset. `svg` itself is still the path string
+      // CLI.md pins, so a consumer that reads it does not have to change.
+      "svgBytes",
+      "svgFontsSubset",
       "ms",
     ]);
     expect(json.shapeCount).toBe(5);
     expect(errorLints(json.lints)).toEqual([]);
     expect(json.result).toEqual({ boxes: 3, arrows: 2 });
     expect(json.svg).toBeNull();
+    expect(json.svgBytes).toBeNull();
+    expect(json.svgFontsSubset).toBeNull();
 
     const document = JSON.parse(await fs.readFile(file, "utf8")) as { records: unknown[] };
     expect(Array.isArray(document.records)).toBe(true);
@@ -151,6 +160,38 @@ describe("run", () => {
     // for: a blank or font-less canvas compresses to far less than that.
     const png = await fs.stat(path.join(dir, "out.png"));
     expect(png.size).toBeGreaterThan(10_000);
+  });
+
+  it("subsets the fonts of a --svg written by run, and --no-subset-fonts does not", async () => {
+    // `run --svg` and `export --svg` go through the same writer, and this is
+    // the half that has a document to save first. The point of checking both
+    // is that the flag reaches the same place from two commands.
+    await writeSnippet("draw.js", THREE_BOXES);
+    const small = await cli([
+      "run", "diagram.tldr", "--code", "draw.js", "--create", "--svg", "small.svg", "--json",
+    ]);
+    expect(small.code).toBe(0);
+    const smallJson = JSON.parse(small.stdout) as RunJson;
+    expect(smallJson.svg).toBe(path.join(dir, "small.svg"));
+    expect(smallJson.svgFontsSubset).toBe(true);
+    expect(smallJson.svgBytes).toBe((await fs.stat(path.join(dir, "small.svg"))).size);
+
+    const whole = await cli([
+      "run", "diagram.tldr", "--code", "draw.js", "--svg", "whole.svg", "--no-subset-fonts", "--json",
+    ]);
+    expect(whole.code).toBe(0);
+    const wholeJson = JSON.parse(whole.stdout) as RunJson;
+    expect(wholeJson.svgFontsSubset).toBe(false);
+    expect(wholeJson.svgBytes ?? 0).toBeGreaterThan((smallJson.svgBytes ?? 0) * 2);
+
+    // Self-contained either way: the fonts are still inline, because an SVG
+    // rendered as an image fetches nothing.
+    const svg = await fs.readFile(path.join(dir, "small.svg"), "utf8");
+    expect(svg).toContain("@font-face");
+    expect(svg).toContain("data:font/woff2;base64,");
+    for (const label of ["agent cli", "headless page", "screenshot png"]) {
+      expect(svg, `the SVG is missing "${label}"`).toContain(label);
+    }
   });
 
   it("takes a snippet on stdin with --code -", async () => {

@@ -39,6 +39,7 @@ function runOptions(overrides: Partial<Parameters<typeof run>[0]> = {}) {
     file: path.join(dir, "diagram.tldr"),
     create: false,
     save: true,
+    subsetFonts: true,
     allowLints: false,
     padding: 32,
     pixelRatio: 2,
@@ -133,6 +134,7 @@ describe("export", () => {
       file: path.join(dir, "diagram.tldr"),
       padding: 32,
       pixelRatio: 2,
+      subsetFonts: true,
       cwd: dir,
       ...overrides,
     };

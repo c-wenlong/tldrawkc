@@ -54,7 +54,8 @@
     "doctor": "node dist/cli/index.js doctor"
   },
   "dependencies": {
-    "playwright-core": "1.63.0"
+    "playwright-core": "1.63.0",
+    "subset-font": "^2.7.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

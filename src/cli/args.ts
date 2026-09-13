@@ -81,6 +81,7 @@ export const COMMAND_OPTIONS = {
     svg: { type: "string" },
     create: { type: "boolean" },
     "no-save": { type: "boolean" },
+    "no-subset-fonts": { type: "boolean" },
   },
   shot: {
     output: { type: "string", short: "o" },
@@ -94,6 +95,7 @@ export const COMMAND_OPTIONS = {
     svg: { type: "string" },
     png: { type: "string" },
     ids: { type: "string" },
+    "no-subset-fonts": { type: "boolean" },
   },
   "from-mermaid": {
     source: { type: "string" },
@@ -154,6 +156,15 @@ export interface CommandOptions {
   create: boolean;
   /** False when `run --no-save` was passed. */
   save: boolean;
+  /**
+   * False when `--no-subset-fonts` was passed to `run` or `export`.
+   *
+   * Default on: a committed SVG carries every glyph of every font it uses
+   * otherwise, which is most of the file. Off is for a diagram somebody means
+   * to edit by hand later, where a glyph the drawing does not already contain
+   * has to still be there.
+   */
+  subsetFonts: boolean;
   /** `shot -o <out.png>`. */
   output: string | undefined;
   /** `shot --ids a,b,c`, split and trimmed. */
@@ -364,6 +375,9 @@ export function parseCommand(
         // `--no-save` is the flag CLI.md names, so it is parsed literally and
         // inverted here. `parseArgs` has no negation of its own.
         save: values["no-save"] !== true,
+        // Same inversion as `--no-save`, and for the same reason: `parseArgs`
+        // has no negation, so the flag CLI.md names is parsed literally.
+        subsetFonts: values["no-subset-fonts"] !== true,
         output: values["output"] as string | undefined,
         ids: splitIds(values["ids"] as string | undefined),
         from: values["from"] as string | undefined,

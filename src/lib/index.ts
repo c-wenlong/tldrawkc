@@ -57,6 +57,7 @@ export {
   type ExportOptions,
   type ExportResult,
   type ExportedFile,
+  type ExportedSvg,
   type FromMermaidOptions,
   type FromMermaidResult,
   type InspectCommandResult,
@@ -69,6 +70,19 @@ export {
   type ShotCommandOptions,
   type ShotCommandResult,
 } from "./canvas.js";
+
+export {
+  collectSvgCharacters,
+  decodeEntities,
+  findFontFaces,
+  spliceFontFaces,
+  subsetSvgFonts,
+  SAFETY_CHARACTERS,
+  type FontFaceOutcome,
+  type InlinedFontFace,
+  type SubsetFontsOptions,
+  type SubsetFontsResult,
+} from "./fonts.js";
 
 export {
   list,

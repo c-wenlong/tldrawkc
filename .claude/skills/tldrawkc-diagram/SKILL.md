@@ -147,6 +147,12 @@ directory, and before drawing something that may already be there.
 The `.tldr` beside the `.svg` is what makes the diagram editable later: the
 next session can `inspect` it and extend it rather than redraw it.
 
+`export --svg` cuts the fonts it inlines down to the glyphs the diagram draws,
+which takes a committed SVG from roughly 450 kB to 200 kB and renders
+identically. Add `--no-subset-fonts` only when you mean to edit the SVG's text
+by hand afterwards, since a subset font has no glyph for a letter the drawing
+does not already contain.
+
 ## What makes a teaching diagram work
 
 - One idea per diagram. If it needs a legend, it is doing too much.
