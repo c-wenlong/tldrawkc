@@ -381,6 +381,17 @@ Collected as they are found, so they are not rediscovered.
   outlines, so this is a gap problem and not a helper bug. `HELPERS.md` owes
   the example wider gaps.
 
+- **There are two option types with `Line` in the name.** `layout.ts` has had
+  `LineOptions` since phase 1 and it is the gap and alignment for `row` and
+  `column`. The options for `helpers.line`, the unbound mark, are
+  `DrawLineOptions` in `connect.ts`. Both are re-exported from
+  `helpers/index.ts`, so reaching for the wrong one gets a confusing error
+  about `gap` rather than an obvious one about the name.
+- **A geo shape's page bounds are not its props.** Anything that puts two
+  containers on the same size has to read the bounds, work out the difference
+  and add that to `props.w` and `props.h`, because `growY` on a wrapped label
+  means two shapes handed the same `props.h` can still render at different
+  heights. `resizeBoundsTo` in `layout.ts` is the one place that does it.
 - **tldraw 5 has no rounded rectangle.** `GeoShapeGeoStyle` is a fixed enum
   (`rectangle`, `ellipse`, `oval`, `diamond`, `cloud`, `hexagon`, `star`,
   `heart`, ...) and `TLGeoShapeProps` carries nothing to round a corner with,

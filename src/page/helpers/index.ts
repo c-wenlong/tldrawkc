@@ -29,17 +29,21 @@ import {
 import {
   makeAttribute,
   makeConnection,
+  makeLine,
   makeStub,
   type AttributeOptions,
   type ConnectOptions,
+  type DrawLineOptions,
 } from "./connect.js";
 import {
+  alignContainers as alignContainersTo,
   boxShapes as containerAround,
   fitCamera as fitCameraTo,
   layoutColumn,
   layoutGrid,
   layoutRow,
   translate as translateShapes,
+  type AlignContainersOptions,
   type BoxShapesOptions,
   type FitCameraOptions,
   type GridOptions,
@@ -53,9 +57,22 @@ import type { Lint } from "./lints.js";
 import type { Rect, Side } from "./geometry.js";
 import type { ShapeKey } from "./ids.js";
 
-export type { BoxOptions, ClearOptions, NoteOptions, TextOptions } from "./shapes.js";
-export type { AttributeOptions, ConnectOptions, AnchorSpec, HeadSpec } from "./connect.js";
 export type {
+  BoxOptions,
+  CenterOptions,
+  ClearOptions,
+  NoteOptions,
+  TextOptions,
+} from "./shapes.js";
+export type {
+  AttributeOptions,
+  ConnectOptions,
+  AnchorSpec,
+  DrawLineOptions,
+  HeadSpec,
+} from "./connect.js";
+export type {
+  AlignContainersOptions,
   BoxShapesOptions,
   FitCameraOptions,
   GridOptions,
@@ -86,11 +103,27 @@ export interface Helpers {
     side: Side,
     opts?: AttributeOptions,
   ): { textId: TLShapeId; lineId: TLShapeId };
-  stub(key: ShapeKey, x: number, y: number, dx: number, dy: number): TLShapeId;
+  line(
+    key: ShapeKey,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    opts?: DrawLineOptions,
+  ): TLShapeId;
+  stub(
+    key: ShapeKey,
+    x: number,
+    y: number,
+    dx: number,
+    dy: number,
+    opts?: DrawLineOptions,
+  ): TLShapeId;
   row(keys: readonly ShapeKey[], opts?: LineOptions): TLShapeId[];
   column(keys: readonly ShapeKey[], opts?: LineOptions): TLShapeId[];
   grid(keys: readonly ShapeKey[], cols: number, opts?: GridOptions): TLShapeId[];
   boxShapes(keys: readonly ShapeKey[], opts?: BoxShapesOptions): TLShapeId;
+  alignContainers(keys: readonly ShapeKey[], opts?: AlignContainersOptions): TLShapeId[];
   translate(keys: readonly ShapeKey[], dx: number, dy: number): TLShapeId[];
   fitCamera(opts?: FitCameraOptions): Rect | null;
   plainText(shape: ShapeKey | TLShape): string;
@@ -148,8 +181,18 @@ export function createHelpers(editor: Editor): HelpersHandle {
    * For headings and free labels only. Words that belong to a shape go in that
    * shape's label, where they move with it.
    *
+   * Three ways to place it against other shapes instead of at a coordinate:
+   * `centerOn: ids` centres it horizontally on their union bounds at the `y`
+   * given, `above: ids` puts it `gap` clear over them and centres it, and
+   * `below: ids` puts it `gap` clear under them. All three are settled after
+   * the shape exists, so a heading that wrapped is centred by the width tldraw
+   * measured rather than the width it was asked for. A single key in `below`
+   * still shares that shape's left edge, the way `box` does.
+   *
    * @example
    * helpers.text('title', 'the render loop', { x: 60, y: 0, size: 'l' })
+   * @example
+   * helpers.text('title', 'two ways to read it', { above: ['left', 'right'], gap: 40, size: 'l' })
    */
   function text(key: ShapeKey, str: string, opts?: TextOptions): TLShapeId {
     return makeText(editor, key, str, opts);
@@ -161,8 +204,13 @@ export function createHelpers(editor: Editor): HelpersHandle {
    * For asides and "why" callouts beside a teaching diagram. A note sizes
    * itself from `size` and grows to fit its text, so it takes no `w` or `h`.
    *
+   * It takes `text`'s `centerOn`, `above` and `below` placement too, which is
+   * worth more here: a note has no width of its own to compute with at all.
+   *
    * @example
    * helpers.note('why', 'the cache is what makes this cheap', { after: 'page', gap: 80 })
+   * @example
+   * helpers.note('aside', 'both panels hold the same arrow', { below: ['left', 'right'], gap: 60 })
    */
   function note(key: ShapeKey, str: string, opts?: NoteOptions): TLShapeId {
     return makeNote(editor, key, str, opts);
@@ -231,17 +279,55 @@ export function createHelpers(editor: Editor): HelpersHandle {
   }
 
   /**
-   * Draw a short decorative line with nothing at either end and return its id.
+   * Draw an unbound line from one page point to another and return its id.
    *
-   * For the loose marks in a legend and nothing else. It carries
-   * `meta.lintIgnore = ['friendless-arrow']`, which is the only reason a line
-   * pointing at empty space is allowed to survive the lint pass.
+   * The mark for geometry that is not a connection: an axis, a vector, a tick,
+   * a rule under a heading. Anything that joins two shapes is `connect`
+   * instead, which binds and so survives a relayout.
+   *
+   * `opts`: `color`, `size`, `dash`, `head` (`none` default, `end`, `start`,
+   * `both`), `kind` (`arc` default, `elbow`), `bend` (arc only), `label`,
+   * `labelColor`, `parent`, `meta`, and `lintIgnore`. It mutes
+   * `friendless-arrow` and `arrow-crosses-shape` by default, because neither
+   * means anything for a mark that was never claiming to join two shapes; pass
+   * `lintIgnore: []` to have it linted like any other arrow. The id comes from
+   * the key the same way `box`'s does, so re-running a snippet moves the line
+   * rather than stacking a second one on it.
    *
    * @example
-   * helpers.stub('legend-dash', 60, 400, 48, 0)
+   * helpers.line('axis-x', 260, 700, 640, 700, { color: 'blue', head: 'end' })
+   * @example
+   * helpers.line('guide', 340, 460, 340, 700, { dash: 'dashed', size: 's' })
    */
-  function stub(key: ShapeKey, x: number, y: number, dx: number, dy: number): TLShapeId {
-    return makeStub(editor, key, x, y, dx, dy);
+  function line(
+    key: ShapeKey,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    opts?: DrawLineOptions,
+  ): TLShapeId {
+    return makeLine(editor, key, x1, y1, x2, y2, opts);
+  }
+
+  /**
+   * `line` with a delta instead of a second point, and the same options.
+   *
+   * `(x, y)` is where it starts and `(dx, dy)` is how far it runs, which is the
+   * convenient form for the loose marks in a legend.
+   *
+   * @example
+   * helpers.stub('legend-dash', 60, 400, 48, 0, { dash: 'dashed', color: 'red' })
+   */
+  function stub(
+    key: ShapeKey,
+    x: number,
+    y: number,
+    dx: number,
+    dy: number,
+    opts?: DrawLineOptions,
+  ): TLShapeId {
+    return makeStub(editor, key, x, y, dx, dy, opts);
   }
 
   /**
@@ -285,11 +371,42 @@ export function createHelpers(editor: Editor): HelpersHandle {
    * the lint pass knows to exempt it from `overlapping-shapes`, `empty-label`
    * and `arrow-crosses-shape`.
    *
+   * `opts`: `label`, `margin` (default 40), `color`, `dash`, `size`,
+   * `shapeId`, `meta`, `minW` and `minH` for a floor on the size, and
+   * `matchSize: otherContainerId` to end up the same size as another
+   * container. Both grow to the larger width and the larger height, each
+   * keeping its own top-left, so two panels being compared read as two panels.
+   *
    * @example
    * helpers.boxShapes(['png', 'svg'], { label: 'exports', margin: 40 })
+   * @example
+   * helpers.boxShapes(['b1', 'b2'], { label: 'after', matchSize: 'container:before' })
    */
   function boxShapes(keys: readonly ShapeKey[], opts?: BoxShapesOptions): TLShapeId {
     return containerAround(editor, keys, opts);
+  }
+
+  /**
+   * Put every listed container on one size and return their ids.
+   *
+   * The size is the largest width and the largest height across the list,
+   * taken independently, and each container keeps its own top-left, so nothing
+   * that fitted before stops fitting. Two panels drawn round different numbers
+   * of shapes otherwise come out visibly different sizes and a reader takes the
+   * difference for meaning. `opts.axis` is `both` (default), `x` to match only
+   * the widths, or `y` for only the heights. Every container is sent to the
+   * back again afterwards, so it stays behind its members.
+   *
+   * @example
+   * helpers.alignContainers(['container:before', 'container:after'])
+   * @example
+   * helpers.alignContainers(['left', 'middle', 'right'], { axis: 'y' })
+   */
+  function alignContainers(
+    keys: readonly ShapeKey[],
+    opts?: AlignContainersOptions,
+  ): TLShapeId[] {
+    return alignContainersTo(editor, keys, opts);
   }
 
   /**
@@ -420,11 +537,13 @@ export function createHelpers(editor: Editor): HelpersHandle {
     clear,
     connect,
     attribute,
+    line,
     stub,
     row,
     column,
     grid,
     boxShapes,
+    alignContainers,
     translate,
     fitCamera,
     plainText,
