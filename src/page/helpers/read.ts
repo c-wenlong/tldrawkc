@@ -16,13 +16,14 @@ import {
   type Geometry2d,
   type Group2d,
   type TLDefaultFontStyle,
+  type TLDefaultHorizontalAlignStyle,
   type TLDefaultSizeStyle,
   type TLRichText,
   type TLShape,
 } from "tldraw";
 
 import type { Lint, LintBinding, LintShape } from "./lints.js";
-import { runLints } from "./lints.js";
+import { runLints, usableWidthAtBand } from "./lints.js";
 import { readDocumentMeta, type DiagramMeta } from "./meta.js";
 import type { Rect } from "./geometry.js";
 import { toShapeId, type ShapeKey } from "./ids.js";
@@ -204,6 +205,134 @@ function labelWidthOf(editor: Editor, shape: TLShape, boundsWidth: number): numb
 }
 
 /**
+ * The widest line the label renders as, with no padding, in the shape's own
+ * coordinate space.
+ *
+ * `labelWidthOf` cannot answer this and is not trying to. Its measurement is a
+ * `div` with a `max-width`, so CSS shrink-to-fit reports the smaller of the
+ * text's one-line width and that maximum: a label that wraps at all comes back
+ * as exactly the width it was allowed, never as the width it used. That is the
+ * right number for "is a word about to be broken" and useless for "does the
+ * text reach the outline".
+ *
+ * `measureTextSpans` lays the text out and hands back a box per run of
+ * characters, which is how tldraw reproduces the browser's own line breaking in
+ * an SVG export. Grouping those by their top edge gives the real lines, and the
+ * widest of them is what a reader sees reaching furthest across the shape.
+ * Whitespace spans are dropped, because a trailing space is not ink.
+ *
+ * The centre comes back with the width, because `align: 'start'` and
+ * `align: 'end'` push a label to one side of the bounding box and a width alone
+ * cannot see that. Spans are positioned against the measurement element's own
+ * left edge, which sits one label padding inside the shape whichever alignment
+ * is in play: the element is the shape's width less both paddings and carries
+ * the shape's `text-align`, so it starts and ends exactly where tldraw's own
+ * narrower label rectangle does.
+ */
+function labelInkOf(
+  editor: Editor,
+  shape: TLShape,
+  boundsWidth: number,
+): { width: number; centre: number } | undefined {
+  const text = plainTextOf(editor, shape);
+  if (text.trim().length === 0) return undefined;
+  const size = propOf<TLDefaultSizeStyle>(shape, "size");
+  const font = propOf<TLDefaultFontStyle>(shape, "font");
+  if (size === undefined || font === undefined) return undefined;
+
+  const theme = editor.getCurrentTheme();
+  const spans = editor.textMeasure.measureTextSpans(text, {
+    overflow: "wrap",
+    width: boundsWidth,
+    height: Math.max(1, boundsWidth),
+    padding: LABEL_PADDING,
+    fontSize: theme.fontSize * LABEL_FONT_SIZES[size],
+    fontWeight: TEXT_PROPS.fontWeight,
+    fontStyle: TEXT_PROPS.fontStyle,
+    fontFamily: getFontFamily(theme, font),
+    lineHeight: theme.lineHeight,
+    textAlign: propOf<TLDefaultHorizontalAlignStyle>(shape, "align") ?? "middle",
+  });
+
+  // Keyed on the top edge, which is what puts two spans on the same line.
+  const lines = new Map<number, { from: number; to: number }>();
+  for (const span of spans) {
+    if (span.text.trim().length === 0) continue;
+    const key = Math.round(span.box.y);
+    const line = lines.get(key);
+    if (line) {
+      line.from = Math.min(line.from, span.box.x);
+      line.to = Math.max(line.to, span.box.x + span.box.w);
+    } else {
+      lines.set(key, { from: span.box.x, to: span.box.x + span.box.w });
+    }
+  }
+  let widest: { from: number; to: number } | undefined;
+  for (const line of lines.values()) {
+    if (!widest || line.to - line.from > widest.to - widest.from) widest = line;
+  }
+  if (!widest) return undefined;
+  const width = widest.to - widest.from;
+  if (!(width > 0)) return undefined;
+  return { width, centre: LABEL_PADDING + (widest.from + widest.to) / 2 };
+}
+
+/**
+ * How much room the outline leaves the label and how much the label wants, in
+ * the shape's own coordinate space, or `undefined` when the outline leaves the
+ * label all of it.
+ *
+ * `unreadable-label` used to compare against the shape's width, which is the
+ * bounding box, and a diamond only ever reaches its bounding box width along
+ * one line through its middle. The label rectangle cannot answer this either,
+ * because `GeoShapeUtil.getGeometry` clamps it to the shape and so can never
+ * report a size the shape does not have. So the question is put to the rendered
+ * outline instead: take the rows the text occupies and ask how wide the shape
+ * is across them, around the point the text is actually centred on.
+ *
+ * The rows are the label rectangle less its own padding, because that padding
+ * is whitespace: a diamond's corners eating into it is not something a reader
+ * can see, and it is the ink crossing the outline that is the finding. The
+ * rectangle's own position is what carries `verticalAlign`, so `start`,
+ * `middle` and `end` need no case of their own on that axis.
+ *
+ * The chord is measured twice, cheaply first and then around the ink, so that a
+ * shape whose outline gives the label its full width never pays for
+ * {@link labelInkOf}, which is the most expensive measurement in the pass. That
+ * shortcut is safe because a label always sits at least one padding inside the
+ * bounding box, so where the outline is the box no alignment can push it out.
+ * Such a shape answers `undefined`, the rule has nothing extra to check, and
+ * that is every rectangle: the case this must not change.
+ */
+function outlineFitOf(
+  editor: Editor,
+  shape: TLShape,
+  boundsWidth: number,
+): { usableWidth: number; labelInkWidth: number } | undefined {
+  if (shape.type !== "geo") return undefined;
+  const geometry = editor.getShapeGeometry(shape);
+  if (!isGroup(geometry)) return undefined;
+  const label = geometry.children.find((child) => child.isLabel);
+  const body = geometry.children.find((child) => !child.isLabel);
+  // An open path has no inside to measure across, which is every arrow and is
+  // why this is geo only in the first place.
+  if (!label || !body?.isClosed) return undefined;
+  const outline = body.vertices.map((vertex) => ({ x: vertex.x, y: vertex.y }));
+  if (outline.length < 3) return undefined;
+
+  const top = label.bounds.minY + LABEL_PADDING;
+  const bottom = label.bounds.maxY - LABEL_PADDING;
+  const widest = usableWidthAtBand(outline, top, bottom);
+  if (!Number.isFinite(widest) || widest <= 0 || widest >= boundsWidth) return undefined;
+
+  const ink = labelInkOf(editor, shape, boundsWidth);
+  if (ink === undefined) return undefined;
+  const usable = usableWidthAtBand(outline, top, bottom, ink.centre);
+  if (!Number.isFinite(usable)) return undefined;
+  return { usableWidth: usable, labelInkWidth: ink.width };
+}
+
+/**
  * A shape's own geometry vertices, in page coordinates.
  *
  * On an arrow this is the rendered path: `ArrowShapeUtil.getGeometry` returns
@@ -288,6 +417,12 @@ export function collectLintRecords(editor: Editor): {
     else if (Number.isFinite(own)) {
       const width = labelWidthOf(editor, shape, own);
       if (width !== undefined) record.labelWidth = width;
+      // The outline check, which says nothing at all on a plain box.
+      const fit = outlineFitOf(editor, shape, own);
+      if (fit !== undefined) {
+        record.usableWidth = fit.usableWidth;
+        record.labelInkWidth = fit.labelInkWidth;
+      }
     }
     return record;
   });

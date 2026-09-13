@@ -384,7 +384,7 @@ is exit code 3. Nine rules:
 | `overlapping-shapes` | Two shapes intersect by more than a tenth of the smaller one's area |
 | `off-page` | A shape sits further than 10000 page units from the origin |
 | `empty-label` | A geo shape has no text and no fill, so it renders as an unexplained outline |
-| `unreadable-label` | The widest unbreakable run of a label is wider than the room the shape gives it |
+| `unreadable-label` | The widest unbreakable run of a label is wider than the shape, or the widest line it renders as is wider than the outline leaves room for across the rows that line sits on |
 | `missing-glyph` | A label asks for a character its font has no glyph for, so the reader's machine picks the typeface. A **warning** |
 | `missing-topic` | The document names no topic, so a catalog cannot file it. A **warning**: printed, and never an exit code |
 

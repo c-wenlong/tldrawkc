@@ -219,12 +219,18 @@ closes them: phase 3 closed the two about an arrow crossing a shape and a
 snippet's stack, PR #8 closed three more by adding `line`, `alignContainers`
 and container size matching, PR #9 closed two by subsetting the fonts and
 rendering both committed exports in a real Chrome to compare them, PR #10
-closed the one about maths labels going unwarned, and PR #16 closed the
-one about the agent not being able to read its own export.
+closed the one about maths labels going unwarned, PR #15 closed the one about a
+diamond's label exceeding its outline by measuring the room the outline leaves
+rather than the width of the box, and PR #16 closed the one about the agent not
+being able to read its own export.
 
-- **A diamond's label can exceed its outline without a lint.**
-  `unreadable-label` compares against the shape's width, and a diamond's
-  usable width at the label's height is a fraction of that.
+- **The mermaid importer gives a diamond the box a rectangle would get.** It
+  sizes every node by counting the characters in its label, and a diamond holds
+  a fraction of its box's width across the rows a label sits on, so
+  `Looks right?` in `test/fixtures/mermaid/subgraph-8-9.mmd` imports with its
+  text through both slanted edges. `unreadable-label` says so since PR #15, and
+  the e2e suite asserts that finding rather than allowing it; the fix is for the
+  importer to widen a pinched geo, which is its own concern.
 - **`RL` and `BT` have never been looked at rendered.** All five directions
   are covered by unit fixtures over the `Plan`, not by a picture.
 - **`--page`, `--allow-lints` and `meta.lintIgnore` are unexercised on a real

@@ -256,7 +256,7 @@ async function pngSize(file: string): Promise<{ width: number; height: number }>
  * not about the catalog. Filtering it out here keeps each assertion saying
  * "nothing is wrong with the picture", which is what it always meant.
  */
-function errorLints(lints: Array<{ rule: string; severity?: string }>) {
+function errorLints(lints: Array<{ rule: string; severity?: string; shapeIds?: string[] }>) {
   return lints.filter((lint) => (lint.severity ?? "error") === "error");
 }
 
@@ -367,10 +367,13 @@ describe("export --svg font subsetting", () => {
   it("cuts the eight-node map to a fraction of its weight, labels intact", async () => {
     const source = path.join(FIXTURES, "subgraph-8-9.mmd");
     const labels = mermaidLabels(await fs.readFile(source, "utf8"));
-    expect(await cli(["from-mermaid", "diagram.tldr", "--source", source])).toHaveProperty(
-      "code",
-      0,
-    );
+    // `--allow-lints`, because the fixture's `Looks right?` diamond is a real
+    // finding: the importer sizes every node by counting characters and hands a
+    // diamond the same box a rectangle would get, so its label runs out through
+    // the slanted edges. This test is about the SVG's weight, not about that.
+    expect(
+      await cli(["from-mermaid", "diagram.tldr", "--source", source, "--allow-lints"]),
+    ).toHaveProperty("code", 0);
 
     const small = await cli(["export", "diagram.tldr", "--svg", "small.svg", "--json"]);
     expect(small.code).toBe(0);
@@ -404,10 +407,13 @@ describe("export --svg font subsetting", () => {
 
   it("keeps the whole font for --no-subset-fonts, and says so", async () => {
     const source = path.join(FIXTURES, "subgraph-8-9.mmd");
-    expect(await cli(["from-mermaid", "diagram.tldr", "--source", source])).toHaveProperty(
-      "code",
-      0,
-    );
+    // `--allow-lints`, because the fixture's `Looks right?` diamond is a real
+    // finding: the importer sizes every node by counting characters and hands a
+    // diamond the same box a rectangle would get, so its label runs out through
+    // the slanted edges. This test is about the SVG's weight, not about that.
+    expect(
+      await cli(["from-mermaid", "diagram.tldr", "--source", source, "--allow-lints"]),
+    ).toHaveProperty("code", 0);
 
     const small = await cli(["export", "diagram.tldr", "--svg", "small.svg", "--json"]);
     const whole = await cli([
@@ -528,7 +534,12 @@ describe("from-mermaid", () => {
     expect(labels).toHaveLength(8);
 
     const built = await cli(["from-mermaid", "diagram.tldr", "--source", source, "--json"]);
-    expect(built.code).toBe(0);
+    // Exit 3, not 0: the import is correct and one of the shapes it drew is
+    // not. The importer sizes a node by counting its characters and gives a
+    // diamond the box a rectangle would get, so `Looks right?` runs out through
+    // the slanted edges, which `unreadable-label` now says out loud. The
+    // document is written either way, which is what the rest of this checks.
+    expect(built.code).toBe(3);
     const json = JSON.parse(built.stdout) as MermaidJson;
     expect(Object.keys(json.nodes)).toHaveLength(8);
     expect(json.edges).toHaveLength(9);
@@ -536,11 +547,15 @@ describe("from-mermaid", () => {
     expect(json.unsupported).toEqual([]);
 
     const read = await cli(["inspect", "diagram.tldr", "--json"]);
-    expect(read.code).toBe(0);
+    expect(read.code).toBe(3);
     const canvas = JSON.parse(read.stdout) as InspectJson;
     expect(canvas.bindings).toHaveLength(9);
     expect(canvas.bindings.every((binding) => binding.from && binding.to)).toBe(true);
-    expect(errorLints(canvas.lints)).toEqual([]);
+    // The diamond above, and nothing else. Named rather than allowed, so a
+    // second finding appearing here is a red test rather than a shrug.
+    expect(errorLints(canvas.lints).map((lint) => [lint.rule, lint.shapeIds])).toEqual([
+      ["unreadable-label", ["shape:look"]],
+    ]);
 
     const exported = await cli(["export", "diagram.tldr", "--svg", "out.svg"]);
     expect(exported.code).toBe(0);

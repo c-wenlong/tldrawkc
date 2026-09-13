@@ -88,7 +88,11 @@ function cli(args: string[]): Promise<CliResult> {
 
 /** Draw the fixture and export it, which is what a committed diagram is. */
 async function exportFixture(name = "map.svg"): Promise<string> {
-  const drawn = await cli(["from-mermaid", "map.tldr", "--source", FIXTURE]);
+  // `--allow-lints`, because the fixture's `Looks right?` diamond is a real
+  // finding: the importer sizes every node by counting characters and gives a
+  // diamond the box a rectangle would get, so its label runs out through the
+  // slanted edges. `verify` is about the finished SVG, not about that.
+  const drawn = await cli(["from-mermaid", "map.tldr", "--source", FIXTURE, "--allow-lints"]);
   expect(drawn.code, drawn.stderr).toBe(0);
   const exported = await cli(["export", "map.tldr", "--svg", name]);
   expect(exported.code, exported.stderr).toBe(0);
@@ -169,7 +173,14 @@ describe("verify", () => {
   });
 
   it("takes a .tldr, exports it, and leaves no SVG behind", async () => {
-    const drawn = await cli(["from-mermaid", "map.tldr", "--source", FIXTURE]);
+    // See `exportFixture` for why the lint is allowed rather than absent.
+    const drawn = await cli([
+      "from-mermaid",
+      "map.tldr",
+      "--source",
+      FIXTURE,
+      "--allow-lints",
+    ]);
     expect(drawn.code, drawn.stderr).toBe(0);
 
     const result = await cli(["verify", "map.tldr", "-o", "doc.png", "--json"]);
