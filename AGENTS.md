@@ -6,10 +6,12 @@ browser page: the page owns every drawing decision, and Node only launches it,
 moves files and prints.
 
 This file is the operating manual. [README.md](README.md) says what the tool
-is for; the design docs it is built from live in the self-learn repo (see
-"Where the design lives" below).
+is for, and [docs/](docs/README.md) holds the design docs it is built from:
+the decisions, the architecture, the CLI reference, the helper vocabulary, the
+roadmap and the prior art.
 
-**Status: phase 4, complete.** Every verb in CLI.md is built: `new`, `run`,
+**Status: phase 4, complete.** Every verb in [docs/CLI.md](docs/CLI.md) is
+built: `new`, `run`,
 `shot`, `inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api`
 and `doctor`. `PLANNED_COMMANDS` in `src/cli/args.ts` is empty and stays as the
 place to name the next specified-but-unbuilt verb.
@@ -78,7 +80,7 @@ project.
 
 The tool depends on `playwright-core`, which ships no browser. `doctor`
 reports which executable was picked and how. The order is fixed by D9 in the
-design docs and implemented in `src/lib/browser.ts`:
+design docs (D9) and implemented in `src/lib/browser.ts`:
 
 1. `--chromium <path>`
 2. `TLDRAWKC_CHROMIUM`
@@ -171,7 +173,7 @@ The one long-lived command, and the only place two of the rules bend.
 
 - **It keeps a server and a browser alive on purpose.** Layering rule 6 says a
   command never leaves a browser running, and `serve` is the named exception in
-  the design docs: it runs until SIGINT. The CLI owns that wait, in
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): it runs until SIGINT. The CLI owns that wait, in
   `untilSignal()`, and closes the server before returning 0. Nothing in
   `src/lib/serve.ts` waits or prints.
 - **The signal listener goes on before the server, not after the URL.**
@@ -297,7 +299,8 @@ parser accepts and every near miss it must ignore.
 
 ## Layering rules
 
-The full list is in the design docs. The ones that bite:
+The full list is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The ones
+that bite:
 
 1. **`src/lib/` and `src/cli/` never import `tldraw`, `react` or `src/page/`.**
    Those live only in the page bundle. `test/unit/layering.test.ts` greps for
@@ -435,8 +438,8 @@ Collected as they are found, so they are not rediscovered.
   label clear of everything. `DEFAULT_GAP` is 120 for that reason. Re-checked
   after the precise-anchor fix above: the arrows are straight at 80 and 60 now,
   but `mirror` still covers the whole 60-unit gap and lands on both box
-  outlines, so this is a gap problem and not a helper bug. `HELPERS.md` owes
-  the example wider gaps.
+  outlines, so this is a gap problem and not a helper bug, and the example in
+  [docs/HELPERS.md](docs/HELPERS.md) carries the wider gaps for that reason.
 
 - **There are two option types with `Line` in the name.** `layout.ts` has had
   `LineOptions` since phase 1 and it is the gap and alignment for `row` and
@@ -666,17 +669,22 @@ Collected as they are found, so they are not rediscovered.
 
 ## Where the design lives
 
-The brief this repo is built from is in the self-learn repo at
-[tldraw-integration/](https://github.com/c-wenlong/self-learn/tree/main/tldraw-integration):
-`DECISIONS.md` for the calls already made, `ARCHITECTURE.md` for the package
-layout and the bridge, `CLI.md` for every command, flag, JSON shape and exit
-code, `HELPERS.md` for the snippet vocabulary, and `ROADMAP.md` for the phase
-checklists. Those files are the contract. Tick a roadmap item in the PR that
-completes it, and record a decision there when you make one, not here.
+[docs/](docs/README.md), in this repo. [DECISIONS.md](docs/DECISIONS.md) for
+the calls already made, [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+package layout and the bridge, [CLI.md](docs/CLI.md) for every command, flag,
+JSON shape and exit code, [HELPERS.md](docs/HELPERS.md) for the snippet
+vocabulary and the nine lint rules, [ROADMAP.md](docs/ROADMAP.md) for the
+phase checklists and the known gaps, and [PRIOR-ART.md](docs/PRIOR-ART.md) for
+what was checked and ruled out. Those files are the contract. Tick a roadmap
+item in the PR that completes it, and record a decision there when you make
+one, not here.
 
-Keeping them there while the tool is young is deliberate (D12): self-learn is
-where the tool is consumed and where the phases are tracked. Moving them into
-this repo is a phase 3 or later concern.
+They were written in the self-learn repo, at `tldraw-integration/`, before any
+of this existed, and lived there through phases 0 to 4 (D12) because that is
+where the tool was being consumed. They moved here once it was finished. What
+stayed behind is the part that was about that repo rather than about the tool:
+where its assets live, how its tutoring loop calls this, and which of its
+documents had to change.
 
 ## Relation to self-learn
 
