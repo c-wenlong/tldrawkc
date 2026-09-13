@@ -118,6 +118,39 @@ export function unionRects(rects: readonly Rect[]): Rect | null {
 }
 
 /**
+ * The smallest size that covers every one of these boxes, or `null` when there
+ * are none.
+ *
+ * Not a union rectangle: the boxes are not being merged into one region, they
+ * are being grown to a common size while each keeps its own corner. So it is
+ * the largest width and the largest height, taken independently. That is what
+ * `matchSize` and `alignContainers` mean by "the same size".
+ */
+export function unionSize(
+  sizes: readonly { w: number; h: number }[],
+): { w: number; h: number } | null {
+  if (sizes.length === 0) return null;
+  let w = -Infinity;
+  let h = -Infinity;
+  for (const size of sizes) {
+    w = Math.max(w, size.w);
+    h = Math.max(h, size.h);
+  }
+  return { w, h };
+}
+
+/**
+ * How far to move `own` along x so its centre sits on the centre of `target`.
+ *
+ * Read after the shape exists rather than before, because tldraw measures the
+ * text: a title that wrapped to two lines is narrower than the width it was
+ * asked for, and centring it on the nominal width leaves it visibly off.
+ */
+export function centerXOffset(target: Rect, own: Rect): number {
+  return target.x + target.w / 2 - (own.x + own.w / 2);
+}
+
+/**
  * The pixel ratio to actually export at.
  *
  * `MAX_SHOT_EDGE` is a ceiling on the longest edge of the PNG, because a

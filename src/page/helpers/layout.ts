@@ -10,7 +10,7 @@
 
 import { type Editor, type TLShapeId } from "tldraw";
 
-import { unionRects, type Rect } from "./geometry.js";
+import { unionRects, unionSize, type Rect } from "./geometry.js";
 import { toShapeId, type ShapeKey, type ShapeMeta } from "./ids.js";
 import { makeBox, type BoxOptions } from "./shapes.js";
 
@@ -60,8 +60,25 @@ export interface BoxShapesOptions {
   size?: BoxOptions["size"];
   /** The container's own key. Derived from the label when omitted. */
   shapeId?: string;
+  /** Smallest width the container may have, whatever its members need. */
+  minW?: number;
+  /** Smallest height the container may have, whatever its members need. */
+  minH?: number;
+  /**
+   * Another container to end up the same size as. Both grow to the larger
+   * width and the larger height, each keeping its own top-left corner, so two
+   * panels being compared read as two panels rather than as one big and one
+   * small. Use {@link alignContainers} for three or more.
+   */
+  matchSize?: ShapeKey;
   /** Extra metadata. `container: true` is always set on top of it. */
   meta?: ShapeMeta;
+}
+
+/** Options for {@link alignContainers}. */
+export interface AlignContainersOptions {
+  /** Which axes to match, default `both`. */
+  axis?: "both" | "x" | "y";
 }
 
 /** Options for {@link fitCamera}. */
@@ -95,6 +112,74 @@ function moveBoundsTo(editor: Editor, id: TLShapeId, box: Rect, x: number, y: nu
     x: shape.x + (x - box.x),
     y: shape.y + (y - box.y),
   });
+}
+
+/**
+ * Grow a shape until its page bounds measure `w` by `h`, keeping its top-left.
+ *
+ * The new size is written to the shape's own props but computed from its page
+ * bounds, because a geo shape's `h` is a minimum rather than its height:
+ * tldraw adds `growY` when the label wraps, so two containers handed the same
+ * `props.h` can still render at different heights. Setting the difference is
+ * what keeps the promise the caller actually made, which is that the two look
+ * the same size.
+ *
+ * Shrinking is allowed, since `alignContainers` may be re-run after a panel
+ * lost a member. Geo shapes only, which is every container `boxShapes` draws:
+ * a note has no `w` or `h` at all and a frame reparents what it covers, so
+ * neither is a thing this can quietly resize.
+ */
+function resizeBoundsTo(editor: Editor, id: TLShapeId, w: number, h: number): void {
+  const shape = editor.getShape(id);
+  const bounds = editor.getShapePageBounds(id);
+  if (!shape || !bounds) return;
+  if (shape.type !== "geo") {
+    throw new Error(
+      `tldrawkc: "${id}" is a ${shape.type} shape, and only a geo container drawn by boxShapes can be resized to match another`,
+    );
+  }
+  const props = shape.props as { w: number; h: number };
+
+  const nextW = Math.max(1, props.w + (w - bounds.w));
+  const nextH = Math.max(1, props.h + (h - bounds.h));
+  if (nextW === props.w && nextH === props.h) return;
+  editor.updateShape({ id, type: "geo", props: { w: nextW, h: nextH } });
+}
+
+/**
+ * Put every listed container on the same size, each keeping its own top-left.
+ *
+ * The size is the largest width and the largest height across the list, taken
+ * independently, so nothing that fitted before stops fitting. Two panels drawn
+ * round different numbers of shapes otherwise come out visibly different sizes
+ * and the reader takes the difference for meaning; this is the fix, and it is
+ * `matchSize` generalised past a pair.
+ *
+ * Every container is sent to the back again afterwards, because resizing one
+ * is an update and an update is enough to lift it over its own members.
+ */
+export function alignContainers(
+  editor: Editor,
+  keys: readonly ShapeKey[],
+  opts: AlignContainersOptions = {},
+): TLShapeId[] {
+  if (keys.length === 0) {
+    throw new Error("tldrawkc: alignContainers needs at least one container");
+  }
+  const axis = opts.axis ?? "both";
+  const entries = keys.map((key) => ({
+    id: toShapeId(key),
+    box: boundsOf(editor, key, "alignContainers"),
+  }));
+  const size = unionSize(entries.map((entry) => entry.box));
+  if (!size) return [];
+
+  for (const { id, box } of entries) {
+    resizeBoundsTo(editor, id, axis === "y" ? box.w : size.w, axis === "x" ? box.h : size.h);
+  }
+  const ids = entries.map((entry) => entry.id);
+  editor.sendToBack(ids);
+  return ids;
 }
 
 function crossOffset(align: Align, extent: number, own: number): number {
@@ -228,8 +313,8 @@ export function boxShapes(
   const id = makeBox(editor, key, label, {
     x: inner.x - margin,
     y: inner.y - margin - headroom,
-    w: inner.w + margin * 2,
-    h: inner.h + margin * 2 + headroom,
+    w: Math.max(inner.w + margin * 2, opts.minW ?? 0),
+    h: Math.max(inner.h + margin * 2 + headroom, opts.minH ?? 0),
     geo: "rectangle",
     color: opts.color ?? "grey",
     dash: opts.dash ?? "draw",
@@ -239,6 +324,26 @@ export function boxShapes(
     verticalAlign: "start",
     meta: { ...opts.meta, container: true },
   });
+
+  if (opts.matchSize !== undefined) {
+    const otherId = toShapeId(opts.matchSize);
+    if (!editor.getShape(otherId)) {
+      throw new Error(
+        `tldrawkc: boxShapes cannot match the size of "${String(opts.matchSize)}" because no such shape exists`,
+      );
+    }
+    const size = unionSize([
+      boundsOf(editor, id, "boxShapes"),
+      boundsOf(editor, otherId, "boxShapes"),
+    ]);
+    if (size) {
+      resizeBoundsTo(editor, id, size.w, size.h);
+      resizeBoundsTo(editor, otherId, size.w, size.h);
+    }
+    editor.sendToBack([id, otherId]);
+    return id;
+  }
+
   editor.sendToBack([id]);
   return id;
 }

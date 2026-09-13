@@ -28,7 +28,7 @@ import {
 } from "./geometry.js";
 import { toShapeId, type ShapeKey, type ShapeMeta } from "./ids.js";
 import { connectionKey, stripShapePrefix } from "./keys.js";
-import { makeText } from "./shapes.js";
+import { makeText, toParentSpace } from "./shapes.js";
 
 /** How an end of the arrow is placed on its shape: a side name, or a 0..1 point. */
 export type AnchorSpec = Side | NormalizedAnchor;
@@ -291,12 +291,119 @@ export function makeAttribute(
 }
 
 /**
- * Draw a short unbound line and return its id.
+ * The rules a decorative line is exempt from, and why both of them.
  *
- * For the loose marks in a legend and nothing else. It carries
- * `meta.lintIgnore = ['friendless-arrow']`, which is the only reason a line
- * with nothing at either end is allowed to exist: the lint pass would
- * otherwise, correctly, call it an arrow pointing at empty space.
+ * `friendless-arrow` because it has no shape at either end by definition, and
+ * `arrow-crosses-shape` because geometry that is not a connection is drawn
+ * across things on purpose: an axis runs through the dot at its own origin, and
+ * a tick mark sits inside the box it measures. Neither rule has anything to say
+ * about a mark that was never claiming to join two shapes.
+ */
+export const LINE_LINT_IGNORE: readonly string[] = ["friendless-arrow", "arrow-crosses-shape"];
+
+/** Options for {@link makeLine} and {@link makeStub}. */
+export interface DrawLineOptions {
+  /** Line colour, default `black`. */
+  color?: TLDefaultColorStyle;
+  /** Line weight, default `s`. */
+  size?: TLDefaultSizeStyle;
+  /** Line style, default `draw`. */
+  dash?: TLDefaultDashStyle;
+  /** Which ends get an arrowhead, default `none`. `end`, `start`, `both`. */
+  head?: HeadSpec;
+  /** `arc` (default) for a straight or curved line, `elbow` for right-angled segments. */
+  kind?: TLArrowShape["props"]["kind"];
+  /** Curvature, `arc` only, default 0. Positive bends a quarter turn anticlockwise from the direction of travel. */
+  bend?: number;
+  /** A label on the line. Empty by default, which is what a bare axis or rule wants. */
+  label?: string;
+  /** Label colour, defaults to `color`. */
+  labelColor?: TLDefaultColorStyle;
+  /** A frame or group to parent to. The points given stay page coordinates; the helper converts them. */
+  parent?: ShapeKey;
+  /**
+   * Override the muted rules. An array of rule names, or `true` for all of
+   * them. Defaults to {@link LINE_LINT_IGNORE}; pass `[]` to have the line
+   * linted like any other arrow.
+   */
+  lintIgnore?: readonly string[] | true;
+  /** Arbitrary record metadata. `lintIgnore` is merged over it. */
+  meta?: ShapeMeta;
+}
+
+/**
+ * Draw an unbound line between two page points and return its id.
+ *
+ * The mark for geometry that is not a connection: an axis, a vector arrow, a
+ * tick, a rule under a heading. It is an arrow shape, because an arrow is the
+ * only tldraw shape that can carry a head or a bend, but it binds to nothing,
+ * so it stays exactly where it was put. Anything joining two shapes is
+ * `makeConnection` instead, which binds and therefore survives a relayout.
+ *
+ * The id comes from the key the same way `box`'s does, so re-running a snippet
+ * moves the line rather than stacking a second one on it.
+ */
+export function makeLine(
+  editor: Editor,
+  key: ShapeKey,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  opts: DrawLineOptions = {},
+): TLShapeId {
+  const id = toShapeId(key);
+  const heads = HEADS[opts.head ?? "none"];
+
+  // Page coordinates in, parent space out, the same as `box` and `text`. Both
+  // ends go through the transform rather than only the origin, so the delta is
+  // right even under a rotated or scaled parent.
+  const from =
+    opts.parent !== undefined ? toParentSpace(editor, opts.parent, { x: x1, y: y1 }) : { x: x1, y: y1 };
+  const to =
+    opts.parent !== undefined ? toParentSpace(editor, opts.parent, { x: x2, y: y2 }) : { x: x2, y: y2 };
+
+  const props = {
+    kind: opts.kind ?? "arc",
+    color: opts.color ?? "black",
+    labelColor: opts.labelColor ?? opts.color ?? "black",
+    fill: "none" as const,
+    dash: opts.dash ?? "draw",
+    size: opts.size ?? "s",
+    font: "draw" as const,
+    arrowheadStart: heads.start,
+    arrowheadEnd: heads.end,
+    bend: opts.bend ?? 0,
+    start: { x: 0, y: 0 },
+    end: { x: to.x - from.x, y: to.y - from.y },
+    richText: toRichText(opts.label ?? ""),
+  } satisfies Partial<TLArrowShape["props"]>;
+
+  const partial = {
+    id,
+    type: "arrow" as const,
+    x: from.x,
+    y: from.y,
+    ...(opts.parent !== undefined ? { parentId: toShapeId(opts.parent) } : {}),
+    meta: {
+      ...opts.meta,
+      lintIgnore: opts.lintIgnore === undefined ? [...LINE_LINT_IGNORE] : opts.lintIgnore === true ? true : [...opts.lintIgnore],
+    },
+    props,
+  };
+
+  if (editor.getShape(id)) editor.updateShape(partial);
+  else editor.createShape(partial);
+  return id;
+}
+
+/**
+ * {@link makeLine} with a delta instead of a second point.
+ *
+ * `(x, y)` is where the line starts and `(dx, dy)` is how far it runs, which is
+ * the convenient form for the loose marks in a legend. Every option `makeLine`
+ * takes is honoured here: they used to be accepted and dropped on the floor,
+ * so a legend dash asked for in red came out black.
  */
 export function makeStub(
   editor: Editor,
@@ -305,35 +412,7 @@ export function makeStub(
   y: number,
   dx: number,
   dy: number,
-  opts: { color?: TLDefaultColorStyle; size?: TLDefaultSizeStyle; dash?: TLDefaultDashStyle } = {},
+  opts: DrawLineOptions = {},
 ): TLShapeId {
-  const id = toShapeId(key);
-  const props = {
-    kind: "arc" as const,
-    color: opts.color ?? "black",
-    labelColor: opts.color ?? "black",
-    fill: "none" as const,
-    dash: opts.dash ?? "draw",
-    size: opts.size ?? "s",
-    font: "draw" as const,
-    arrowheadStart: "none" as const,
-    arrowheadEnd: "none" as const,
-    bend: 0,
-    start: { x: 0, y: 0 },
-    end: { x: dx, y: dy },
-    richText: toRichText(""),
-  } satisfies Partial<TLArrowShape["props"]>;
-
-  const partial = {
-    id,
-    type: "arrow" as const,
-    x,
-    y,
-    meta: { lintIgnore: ["friendless-arrow"] },
-    props,
-  };
-
-  if (editor.getShape(id)) editor.updateShape(partial);
-  else editor.createShape(partial);
-  return id;
+  return makeLine(editor, key, x, y, x + dx, y + dy, opts);
 }

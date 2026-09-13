@@ -38,6 +38,42 @@ Every arrow is bound at both ends, so moving a box drags its arrows with it.
 The labels are tldraw's own Shantell Sans, bundled into the page so nothing
 is fetched at render time.
 
+## Beyond boxes and arrows
+
+A teaching diagram is rarely only boxes and arrows. Three helpers cover what
+the first real diagrams drawn with this tool had to hand-roll: geometry that is
+not a connection, two panels that have to read as the same size, and a title
+that belongs over the middle of both.
+
+![Two identically sized panels side by side under a centred heading reading One vector, drawn and written. The left panel, outlined blue and labelled the arrow, holds a pair of blue axes with arrowheads, dashed blue guide lines, and a thick red arrow from the origin labelled v = (2, 3). The right panel, outlined violet and labelled the list, holds three boxes reading slot 1, slot 2 and slot 3. Under both runs a red dashed line with an arrowhead at each end, labelled the same thing](docs/example-helpers.png)
+
+```js
+helpers.line('x-axis', 120, 480, 460, 480, { color: 'blue', head: 'end' })
+helpers.line('guide-across', 160, 300, 320, 300, { color: 'blue', dash: 'dashed' })
+helpers.line('vector', 160, 480, 320, 300, { color: 'red', size: 'm', head: 'end' })
+
+const left = helpers.boxShapes(['x-axis', 'y-axis', 'vector'], { label: 'the arrow' })
+helpers.boxShapes(['slot-1', 'slot-2', 'slot-3'], { label: 'the list', matchSize: left })
+
+helpers.text('title', 'One vector, drawn and written', { above: [left, 'the list'], gap: 60 })
+helpers.line('rule', 120, 760, 1000, 760, { head: 'both', dash: 'dashed', label: 'the same thing' })
+```
+
+`line` is an unbound mark between two page points, for an axis, a tick, a
+vector or a rule. It mutes `friendless-arrow` and `arrow-crosses-shape`,
+because neither means anything for a line that was never claiming to join two
+shapes. `connect` remains the only way to draw a real connection.
+
+`matchSize` on `boxShapes`, and `alignContainers` for three or more, grow every
+container to the largest width and the largest height in the set, each keeping
+its own top-left. Two panels holding different numbers of shapes otherwise come
+out different sizes and a reader takes the difference for meaning.
+
+`centerOn`, `above` and `below` on `text` and `note` place a label against the
+union bounds of other shapes rather than at a coordinate, and are settled after
+the shape exists, so a heading that wrapped is centred on the width tldraw
+measured rather than the width it was asked for.
+
 ## From mermaid
 
 Most diagrams that already exist are mermaid, so `from-mermaid` lifts one onto

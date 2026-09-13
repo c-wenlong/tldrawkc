@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   anchorForSide,
   autoAnchors,
+  centerXOffset,
   clampPixelRatio,
   facingSides,
   isSide,
@@ -18,6 +19,7 @@ import {
   placeBelow,
   resolveAnchor,
   unionRects,
+  unionSize,
   type Rect,
 } from "../../../src/page/helpers/geometry.js";
 
@@ -101,6 +103,62 @@ describe("unionRects", () => {
 
   it("is null for nothing", () => {
     expect(unionRects([])).toBeNull();
+  });
+});
+
+describe("unionSize", () => {
+  it("takes the largest width and the largest height independently", () => {
+    // Not the union rectangle: the two boxes are not being merged, they are
+    // being grown to a common size while each keeps its own corner. The
+    // widest is the first and the tallest is the second, so the answer comes
+    // from one of each rather than from either box.
+    expect(unionSize([rect(0, 0, 300, 100), rect(900, 500, 120, 400)])).toEqual({
+      w: 300,
+      h: 400,
+    });
+  });
+
+  it("matches a pair of containers that already agree", () => {
+    expect(unionSize([rect(36, 241, 674, 723), rect(835, 241, 674, 723)])).toEqual({
+      w: 674,
+      h: 723,
+    });
+  });
+
+  it("is the shape itself for a list of one, and null for nothing", () => {
+    expect(unionSize([rect(10, 10, 55, 66)])).toEqual({ w: 55, h: 66 });
+    expect(unionSize([])).toBeNull();
+  });
+
+  it("ignores where the boxes are", () => {
+    const near = unionSize([rect(0, 0, 200, 90), rect(10, 10, 140, 130)]);
+    const far = unionSize([rect(-5000, 7000, 200, 90), rect(9000, -3000, 140, 130)]);
+    expect(near).toEqual(far);
+  });
+});
+
+describe("centerXOffset", () => {
+  it("is the distance between the two centres", () => {
+    // 0..400 has its centre at 200; a 100-wide label at x = 0 has its centre
+    // at 50, so it moves 150 to the right.
+    expect(centerXOffset(rect(0, 0, 400, 200), rect(0, 0, 100, 30))).toBe(150);
+  });
+
+  it("is zero once the label is already centred", () => {
+    expect(centerXOffset(rect(0, 0, 400, 200), rect(150, 0, 100, 30))).toBe(0);
+  });
+
+  it("moves a label left when it starts to the right of centre", () => {
+    expect(centerXOffset(rect(0, 0, 400, 200), rect(300, 0, 100, 30))).toBe(-150);
+  });
+
+  it("centres on the measured width, not the width that was asked for", () => {
+    // The reason this is read after the shape exists: a heading declared 400
+    // wide that tldraw measured at 260 is 70 units off if the nominal width
+    // is used, and exactly centred if the measured one is.
+    const panels = rect(0, 0, 1000, 400);
+    expect(centerXOffset(panels, rect(300, 0, 400, 40))).toBe(0);
+    expect(centerXOffset(panels, rect(300, 0, 260, 40))).toBe(70);
   });
 });
 

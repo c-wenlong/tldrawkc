@@ -165,6 +165,12 @@ next session can `inspect` it and extend it rather than redraw it.
   shape in a cluster.
 - `kind: 'elbow'` for anything architectural or ERD-like, `'arc'` where a
   curve reads better.
+- Axes, vectors, ticks, guides and rules are `helpers.line`, never a raw
+  `createShape` and never a `connect` with the heads turned off.
+- Two panels being compared are `alignContainers`, or `boxShapes` with
+  `matchSize`, so different member counts do not read as a difference in size.
+- Titles and captions are `helpers.text` with `centerOn`, `above` or `below`,
+  never an `x` worked out by hand.
 - End with `return helpers.getLints()` so the run's output says what is left.
 - One concern per snippet. A pass that does twenty things and throws half way
   is rolled back whole.
