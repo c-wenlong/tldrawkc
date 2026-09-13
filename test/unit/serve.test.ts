@@ -199,6 +199,40 @@ describe("PUT /api/document", () => {
   });
 });
 
+describe("GET /favicon.ico", () => {
+  it("answers 204 with no body, so a served tab logs no failed request", async () => {
+    const server = await start();
+    const response = await fetch(`${server.origin}/favicon.ico`);
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+  });
+
+  it("answers a HEAD the same way", async () => {
+    const server = await start();
+    expect((await fetch(`${server.origin}/favicon.ico`, { method: "HEAD" })).status).toBe(204);
+  });
+
+  it("serves a real icon when the bundle has one", async () => {
+    await fs.writeFile(path.join(root, "favicon.ico"), "icon-bytes");
+    const server = await start();
+    const response = await fetch(`${server.origin}/favicon.ico`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/x-icon");
+    expect(await response.text()).toBe("icon-bytes");
+  });
+
+  it("refuses a write to it", async () => {
+    const server = await start();
+    expect((await fetch(`${server.origin}/favicon.ico`, { method: "PUT" })).status).toBe(405);
+  });
+
+  it("is a serve-mode route, not a static one", async () => {
+    const server = await startPageServer({ root, port: 0 });
+    running.push(server);
+    expect((await fetch(`${server.url}/favicon.ico`)).status).toBe(404);
+  });
+});
+
 describe("everything else", () => {
   it("404s an unknown route under /api", async () => {
     const server = await start();

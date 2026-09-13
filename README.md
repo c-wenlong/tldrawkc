@@ -5,9 +5,9 @@ line, take a picture of it, look, and fix it. Built for coding agents, which
 write code well and read images well but cannot see what they just drew unless
 something renders it.
 
-**Status: phase 4.** Every verb in the reference works: `new`, `run`, `shot`,
-`inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api` and
-`doctor`.
+**Status: phase 4, complete.** Every verb in the reference works: `new`, `run`,
+`shot`, `inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api`
+and `doctor`.
 
 ## What it draws
 
@@ -243,11 +243,16 @@ tldrawkc serve learn/assets/dot-product.tldr --no-open --port 7300
 | `/api/document` | GET | The file and its `mtimeMs`. The page polls it and reloads when the mtime moves, which keeps the camera where it is. |
 | `/api/document` | PUT | The page posts the document back on Cmd+S. The write is atomic and the body has to be a `.tldr`. |
 | `/api/health` | GET | `{ ok: true, file }` |
+| `/favicon.ico` | GET | 204. The bundle ships no icon and a real tab asks for one anyway, so the route exists to keep a served session's request log clean. |
 
 The agent and the human write the same file and the last write wins. Draw with
-`run` in one terminal and the tab picks it up within a second; drag a box in the
-tab, save, and the next `inspect` reports the new position. There is no sync
-server and none is planned.
+`run` in one terminal and the tab picks it up within a second, leaving the
+camera where it was. Drag a box in the tab and press Cmd+S (Ctrl+S elsewhere):
+the page serialises the document and PUTs it, and the next `inspect` from any
+terminal reports the new position. Nothing else in the tab writes the file, so
+an accidental nudge costs nothing until you save it. A reload that landed on
+top of unsaved edits says so in a banner. There is no sync server and none is
+planned.
 
 The port is 7240 by default, so the tab can be bookmarked, and falls back to a
 free one when something else has it, saying which. The routes exist only while

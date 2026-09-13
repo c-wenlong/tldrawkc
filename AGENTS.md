@@ -9,9 +9,9 @@ This file is the operating manual. [README.md](README.md) says what the tool
 is for; the design docs it is built from live in the self-learn repo (see
 "Where the design lives" below).
 
-**Status: phase 4.** Every verb in CLI.md is built: `new`, `run`, `shot`,
-`inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api` and
-`doctor`. `PLANNED_COMMANDS` in `src/cli/args.ts` is empty and stays as the
+**Status: phase 4, complete.** Every verb in CLI.md is built: `new`, `run`,
+`shot`, `inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api`
+and `doctor`. `PLANNED_COMMANDS` in `src/cli/args.ts` is empty and stays as the
 place to name the next specified-but-unbuilt verb.
 
 ## What lives where
@@ -194,6 +194,13 @@ The one long-lived command, and the only place two of the rules bend.
   bookmarked, falling back to a free one on EADDRINUSE and reporting which.
   `startPageServer` only falls back when asked, because a verb that named a
   port and silently got another one would be hiding something.
+- **`/favicon.ico` answers 204, in serve mode only.** A real tab asks for an
+  icon whether or not the page declares one, and the bundle ships none, so
+  without the route every serve session logs a 404 that layering rule 8 counts
+  as a failed request. It is mounted beside the API rather than everywhere,
+  because a headless verb's tab never asks; it defers to a real
+  `dist/page/favicon.ico` if one ever lands there, so the 204 cannot quietly
+  shadow an icon someone added.
 
 ### Exit codes
 
@@ -292,7 +299,7 @@ The full list is in the design docs. The ones that bite:
    repo that installs the tool.
 2. **`src/page/` never touches the filesystem or the network.** It takes
    strings and returns strings through the bridge. Serve mode's two fetches to
-   `/api/document` are the one exception, and they arrive in phase 4.
+   `/api/document` are the one exception, and they are the whole of it.
 3. **`src/cli/index.ts` is the only module that prints.** Everything under
    `src/lib/` returns data. That is why `--json` and the human summary come
    from one call.

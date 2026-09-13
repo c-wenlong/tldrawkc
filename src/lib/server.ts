@@ -290,12 +290,27 @@ export async function startServeServer(
 }
 
 /**
+ * The path every browser asks for on its own, whether or not anyone declared it.
+ *
+ * The bundle ships no icon, so without a route for it a served tab logs one
+ * failed request per load. Layering rule 8 counts a 404 as a failure, so an
+ * unanswered favicon would make an honest audit of a serve session read as
+ * broken.
+ */
+export const FAVICON_PATH = "/favicon.ico";
+
+/**
  * Route a request: the serve-mode API first, then the static bundle.
  *
  * `/api/*` belongs to the API whenever one is mounted, so an unknown route
  * under it is a 404 from the API rather than a file lookup that might find
  * something in `dist/page/api/`. With no API mounted nothing is special and
  * every path, `/api/document` included, is a file that does not exist.
+ *
+ * `/favicon.ico` is answered only in serve mode, and only when the bundle
+ * has no icon of its own to serve: a headless verb's tab never asks for one,
+ * and an empty 204 mounted everywhere would hide the day someone adds a real
+ * icon to `dist/page` and it stops being served.
  */
 async function handle(
   root: string,
@@ -309,7 +324,40 @@ async function handle(
     await handleApi(api, pathname, request, response);
     return;
   }
+  if (api !== undefined && pathname === FAVICON_PATH && !(await hasStaticFile(root, pathname))) {
+    endFavicon(request, response);
+    return;
+  }
   await serveStatic(root, request, response);
+}
+
+/** Is there a real file behind this request path? */
+async function hasStaticFile(root: string, pathname: string): Promise<boolean> {
+  const target = resolveStaticPath(root, pathname);
+  if (target === null) return false;
+  try {
+    return (await fs.stat(target)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * "There is no icon, and that is not an error."
+ *
+ * 204 rather than an inlined one-pixel image, because the tab should show the
+ * browser's own default rather than a blank square this repo would then own.
+ * A 204 carries no body and therefore no `Content-Length`, so a `HEAD` and a
+ * `GET` are the same response.
+ */
+function endFavicon(request: http.IncomingMessage, response: http.ServerResponse): void {
+  const method = request.method ?? "GET";
+  if (method !== "GET" && method !== "HEAD") {
+    end(response, 405, "method not allowed", { Allow: "GET, HEAD" });
+    return;
+  }
+  response.writeHead(204, { "Cache-Control": "no-store" });
+  response.end();
 }
 
 /** The three routes from the serve-mode table in ARCHITECTURE.md. */
