@@ -206,7 +206,7 @@ verified it by rendering both committed diagrams in a real Chrome, which is
 also the first time an export had been opened in a browser at all (D38). PR
 #10 is the `missing-glyph` rule, the ninth, and the woff2 `cmap` reader behind
 it (D43); it corrected what this file used to say about `√` as well, since the
-measurement it needed is what showed the claim was wrong. PR #PR_NUMBER is
+measurement it needed is what showed the claim was wrong. PR #16 is
 `verify`, which turns PR #9's one-off render into a verb: it rasterises a
 committed export to a PNG the agent can read and reports four checks over the
 render, so looking at the shipped file is now a step rather than an errand.
@@ -219,7 +219,7 @@ closes them: phase 3 closed the two about an arrow crossing a shape and a
 snippet's stack, PR #8 closed three more by adding `line`, `alignContainers`
 and container size matching, PR #9 closed two by subsetting the fonts and
 rendering both committed exports in a real Chrome to compare them, PR #10
-closed the one about maths labels going unwarned, and PR #PR_NUMBER closed the
+closed the one about maths labels going unwarned, and PR #16 closed the
 one about the agent not being able to read its own export.
 
 - **A diamond's label can exceed its outline without a lint.**
