@@ -5,9 +5,9 @@ line, take a picture of it, look, and fix it. Built for coding agents, which
 write code well and read images well but cannot see what they just drew unless
 something renders it.
 
-**Status: phase 3.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
-`list`, `meta set`, `api` and `doctor` work. The human view (`serve`) is
-specified and not written yet; `tldrawkc help` lists which phase brings it.
+**Status: phase 4.** Every verb in the reference works: `new`, `run`, `shot`,
+`inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api` and
+`doctor`.
 
 ## What it draws
 
@@ -117,8 +117,10 @@ optionally writes a PNG or an SVG. The agent reads the PNG with its own image
 tooling and sends the next snippet. A lint pass flags the things that go wrong
 with generated diagrams, overlapping shapes, arrows pointing at nothing and
 arrows drawn through boxes they have nothing to do with, and makes them a
-non-zero exit code so nobody declares the drawing finished without looking. There is no daemon, no sync server, and no React in
-the dependency tree of whatever repo installs this.
+non-zero exit code so nobody declares the drawing finished without looking.
+There is no daemon, no sync server, and no React in the dependency tree of
+whatever repo installs this. `serve` is the one command that stays up, and it
+is for a human to watch: see "Watching it, and nudging it" below.
 
 ## Install
 
@@ -158,6 +160,7 @@ tldrawkc export diagram.tldr --svg out.svg --no-subset-fonts   # whole fonts, fo
 tldrawkc from-mermaid map.tldr --source map.mmd
 tldrawkc list                             # every .tldr in learn/assets, with its topic
 tldrawkc meta set diagram.tldr --topic dot-product
+tldrawkc serve diagram.tldr               # open it in a real browser tab, until Ctrl+C
 tldrawkc api                              # what a snippet can call
 tldrawkc doctor                           # node, the bundle, Chromium, the page, fonts, write access
 ```
@@ -223,6 +226,34 @@ tldrawkc from-mermaid map.tldr --source learn/map.mmd --shot /tmp/map.png
 Without `--append` the document must not already exist, so a canvas someone has
 since fixed by hand is never overwritten. Any line the parser cannot read is
 reported, in the result and on stderr, and never silently dropped.
+
+### Watching it, and nudging it
+
+`serve diagram.tldr` is the one command that does not exit. It starts the page
+with three routes over that one file and opens it in the machine's own browser,
+with tldraw's full UI rather than the headless canvas every other verb uses.
+
+```bash
+tldrawkc serve learn/assets/dot-product.tldr        # opens a tab, prints the URL
+tldrawkc serve learn/assets/dot-product.tldr --no-open --port 7300
+```
+
+| Route | Method | What |
+| --- | --- | --- |
+| `/api/document` | GET | The file and its `mtimeMs`. The page polls it and reloads when the mtime moves, which keeps the camera where it is. |
+| `/api/document` | PUT | The page posts the document back on Cmd+S. The write is atomic and the body has to be a `.tldr`. |
+| `/api/health` | GET | `{ ok: true, file }` |
+
+The agent and the human write the same file and the last write wins. Draw with
+`run` in one terminal and the tab picks it up within a second; drag a box in the
+tab, save, and the next `inspect` reports the new position. There is no sync
+server and none is planned.
+
+The port is 7240 by default, so the tab can be bookmarked, and falls back to a
+free one when something else has it, saying which. The routes exist only while
+`serve` is running: a headless verb's server has no `/api/*` at all, because a
+snippet runs with the page's own power and would otherwise be one `fetch` away
+from writing an arbitrary file.
 
 ### What a diagram is about
 

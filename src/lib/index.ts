@@ -7,8 +7,9 @@
  * (DECISIONS.md D6) a thin wrapper rather than a rewrite.
  *
  * Phase 2 adds `inspect`, `exportCanvas` and `fromMermaid`, plus the helper
- * reference generator behind the `api` command. `serve` lands in phase 4 and is
- * re-exported from here when it does.
+ * reference generator behind the `api` command. Phase 4 adds `serve`, which is
+ * the one verb that returns while its server is still running: its handle
+ * carries the `close` the caller owes it.
  */
 
 export {
@@ -178,9 +179,26 @@ export {
 export {
   contentTypeFor,
   CONTENT_TYPES,
+  DEFAULT_SERVE_PORT,
   FALLBACK_CONTENT_TYPE,
+  MAX_DOCUMENT_BYTES,
+  MIRROR_QUERY,
+  mirrorUrl,
   resolveStaticPath,
   startPageServer,
+  startServeServer,
   type PageServer,
+  type ServeApiOptions,
+  type ServeServer,
   type StartPageServerOptions,
+  type StartServeServerOptions,
 } from "./server.js";
+
+export {
+  openCommandFor,
+  openInBrowser,
+  serve,
+  type OpenCommand,
+  type ServeHandle,
+  type ServeOptions,
+} from "./serve.js";
