@@ -207,6 +207,49 @@ describe("the drawing helpers, drawn for real", () => {
     expect(legendProps["end"]).toEqual({ x: 120, y: 0 });
   });
 
+  it("unbinds an arrow whose key a line takes over", async () => {
+    // A line is supposed to stay where it was put. Taking over the key of an
+    // arrow that `connect` had bound would otherwise leave the binding records
+    // behind, since `updateShape` does not touch them, and the result would be
+    // a line that still follows two shapes around.
+    await cli(["new", "panels.tldr", "--topic", "dot-product"]);
+    const bind = path.join(dir, "bind.js");
+    await fs.writeFile(
+      bind,
+      `
+      helpers.box('a', 'first', { x: 60, y: 60, w: 170, h: 64 })
+      helpers.box('b', 'second', { after: 'a', gap: 140, w: 170, h: 64 })
+      return helpers.connect('a', 'b', { label: 'then' })
+      `,
+      "utf8",
+    );
+    const bound = await cli(["run", "panels.tldr", "--code", bind, "--json"]);
+    expect(bound.code).toBe(0);
+    const arrowId = (JSON.parse(bound.stdout) as { result: string }).result;
+    expect(arrowId).toMatch(/^shape:/u);
+
+    const takeover = path.join(dir, "takeover.js");
+    await fs.writeFile(
+      takeover,
+      `
+      helpers.line(${JSON.stringify(arrowId)}, 60, 400, 460, 400, { color: 'red' })
+      return helpers.describe().bindings
+      `,
+      "utf8",
+    );
+    const relined = await cli(["run", "panels.tldr", "--code", takeover, "--json"]);
+    expect(relined.code).toBe(0);
+
+    const bindings = (JSON.parse(relined.stdout) as { result: unknown[] }).result;
+    expect(bindings).toEqual([{ arrow: arrowId, from: null, to: null, fromAnchor: null, toAnchor: null }]);
+
+    // And it is where it was put, not wherever the two boxes dragged it.
+    const line = await recordOf(file, arrowId);
+    expect(line["x"]).toBe(60);
+    expect(line["y"]).toBe(400);
+    expect((line["props"] as Record<string, unknown>)["end"]).toEqual({ x: 400, y: 0 });
+  });
+
   it("is idempotent, so a second run moves the line rather than stacking one", async () => {
     await cli(["new", "panels.tldr", "--topic", "dot-product"]);
     const snippet = path.join(dir, "draw.js");

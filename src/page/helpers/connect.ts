@@ -392,8 +392,18 @@ export function makeLine(
     props,
   };
 
-  if (editor.getShape(id)) editor.updateShape(partial);
-  else editor.createShape(partial);
+  if (editor.getShape(id)) {
+    // Unbind before updating. `updateShape` does not touch binding records, so
+    // a key that already belongs to a bound arrow would come back as a line
+    // that is still attached to two shapes and still moves with them, which is
+    // the one thing `line` promises not to be. `makeConnection` deletes them
+    // for the mirror reason, that a rebind is the only reliable way to change
+    // which sides an arrow leaves from.
+    editor.deleteBindings(editor.getBindingsFromShape(id, "arrow"));
+    editor.updateShape(partial);
+  } else {
+    editor.createShape(partial);
+  }
   return id;
 }
 
