@@ -106,6 +106,10 @@ export const COMMAND_OPTIONS = {
     port: { type: "string" },
     "no-open": { type: "boolean" },
   },
+  verify: {
+    output: { type: "string", short: "o" },
+    width: { type: "string" },
+  },
   meta: META_OPTIONS,
 } as const satisfies Record<string, OptionsConfig>;
 
@@ -118,6 +122,7 @@ const ALL_OPTIONS: OptionsConfig = {
   ...COMMAND_OPTIONS.export,
   ...COMMAND_OPTIONS["from-mermaid"],
   ...COMMAND_OPTIONS.serve,
+  ...COMMAND_OPTIONS.verify,
   ...COMMAND_OPTIONS.meta,
 };
 
@@ -126,6 +131,12 @@ export const DEFAULTS = {
   timeoutMs: 30_000,
   padding: 32,
   pixelRatio: 2,
+  /**
+   * `verify --width`, in pixels. See `DEFAULT_VERIFY_WIDTH` in
+   * `src/lib/verify.ts` for why it is this number: it is sized against the
+   * Read tool that looks at the PNG, not against the drawing.
+   */
+  verifyWidth: 1500,
 } as const;
 
 export interface GlobalOptions {
@@ -186,6 +197,8 @@ export interface CommandOptions {
   title: string | undefined;
   /** `--topic` on `new` and `meta set`. */
   topic: string | undefined;
+  /** `verify --width <px>`, or the default. */
+  width: number;
   /** `serve --port <n>`, or nothing for the default. */
   port: number | undefined;
   /** False when `serve --no-open` was passed. */
@@ -227,6 +240,7 @@ export const IMPLEMENTED_COMMANDS = [
   "run",
   "serve",
   "shot",
+  "verify",
 ] as const;
 
 /**
@@ -258,6 +272,7 @@ const ARITY: Record<string, { min: number; max: number; shape: string }> = {
   export: { min: 1, max: 1, shape: "<file.tldr>" },
   "from-mermaid": { min: 1, max: 1, shape: "<file.tldr>" },
   serve: { min: 1, max: 1, shape: "<file.tldr>" },
+  verify: { min: 1, max: 1, shape: "<file.svg>" },
   list: { min: 0, max: 1, shape: "[dir]" },
   meta: { min: 2, max: 2, shape: "set <file.tldr>" },
 };
@@ -360,6 +375,16 @@ export function parseCommand(
   const port = portOption(values["port"] as string | undefined);
   if (!port.ok) return port;
 
+  const width = numberOption(
+    values["width"] as string | undefined,
+    "--width",
+    DEFAULTS.verifyWidth,
+  );
+  if (!width.ok) return width;
+  if (width.value < 1) {
+    return { ok: false, error: "--width expects at least 1 pixel." };
+  }
+
   const code = values["code"] as string | undefined;
   const evalSource = values["eval"] as string | undefined;
   if (code !== undefined && evalSource !== undefined) {
@@ -403,6 +428,7 @@ export function parseCommand(
         title: values["title"] as string | undefined,
         topic: values["topic"] as string | undefined,
         port: port.value,
+        width: width.value,
         // Same inversion as `--no-save`: `parseArgs` has no negation, so the
         // flag CLI.md names is parsed literally and flipped here.
         open: values["no-open"] !== true,

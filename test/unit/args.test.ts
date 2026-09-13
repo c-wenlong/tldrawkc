@@ -100,6 +100,38 @@ describe("dispatch", () => {
     }
   });
 
+  it("takes verify with a file, an output and a width", () => {
+    const result = parse(["verify", "a.svg", "-o", "out.png", "--width", "900"]);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.parsed.options.output).toBe("out.png");
+    expect(result.ok && result.parsed.options.width).toBe(900);
+  });
+
+  it("defaults verify to the reader-sized width", () => {
+    const result = parse(["verify", "a.svg"]);
+    expect(result.ok && result.parsed.options.width).toBe(DEFAULTS.verifyWidth);
+  });
+
+  it("names the file verify wants when it is given none", () => {
+    const result = parse(["verify"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain("<file.svg>");
+  });
+
+  it("refuses a width that is not a usable number of pixels", () => {
+    for (const raw of ["0", "-4", "wide"]) {
+      const result = parse(["verify", "a.svg", "--width", raw]);
+      expect(result.ok, raw).toBe(false);
+      expect(!result.ok && result.error).toContain("--width");
+    }
+  });
+
+  it("keeps --width off every other command", () => {
+    const result = parse(["shot", "a.tldr", "--width", "900"]);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain('--width is not an option of "shot"');
+  });
+
   it("rejects an unknown option", () => {
     const result = parse(["doctor", "--nope"]);
     expect(result.ok).toBe(false);
@@ -214,6 +246,10 @@ describe("command options", () => {
       source: undefined,
       append: false,
       open: true,
+      // The one command option with a value rather than a default of nothing:
+      // `verify` always renders at some width, so there is a number here even
+      // when the command being parsed is not `verify`.
+      width: 1500,
     });
   });
 

@@ -562,6 +562,158 @@ export async function openCanvasPage(options: OpenCanvasOptions): Promise<Canvas
   };
 }
 
+// ---------------------------------------------------------------------------
+// A page with no bridge
+// ---------------------------------------------------------------------------
+
+/**
+ * A page that is not the tldraw bundle.
+ *
+ * `verify` renders a finished SVG, which has no editor, no bridge and no
+ * helpers: what it needs is a browser that will lay the file out, a way to ask
+ * the DOM what happened, and a picture. So this is the same launch, the same
+ * request bookkeeping and the same `finally`, stopping short of waiting for a
+ * bridge that will never exist.
+ *
+ * `evaluate` takes source as a string for the reason
+ * {@link FONTS_READY_EXPRESSION} does: this side of the tool is compiled
+ * without the DOM lib on purpose, so a function body full of `document` would
+ * not typecheck here.
+ */
+export interface RasterPage {
+  /** The URL the page was opened at. */
+  readonly url: string;
+  /** Evaluate an expression in the page and bring the value back. */
+  evaluate<T>(expression: string): Promise<T>;
+  /** Wait for font loading to settle. Same reason as `CanvasHandle.fontsReady`. */
+  fontsReady(): Promise<string[]>;
+  /** Screenshot one element, as base64 PNG for `files.ts` to write. */
+  screenshot(selector: string): Promise<string>;
+  /** Every request the page made, in order, the document itself included. */
+  requests(): string[];
+  /** Every request that failed or answered 400 or worse. */
+  failedRequests(): FailedRequest[];
+  close(): Promise<void>;
+}
+
+export interface OpenRasterPageOptions {
+  /** Where the harness page is served from. `withRasterPage` fills this in. */
+  url: string;
+  chromium?: string | undefined;
+  headed?: boolean | undefined;
+  /** How long the page gets to load. */
+  timeoutMs?: number | undefined;
+}
+
+/** Launch Chromium and open `url`, with no bridge to wait for. */
+export async function openRasterPage(options: OpenRasterPageOptions): Promise<RasterPage> {
+  const timeoutMs = options.timeoutMs ?? BRIDGE_TIMEOUT_MS;
+  const resolved = await resolveChromium({ flag: options.chromium });
+
+  let browser: Browser;
+  try {
+    browser = await chromium.launch({
+      executablePath: resolved.executablePath,
+      headless: !options.headed,
+    });
+  } catch (error) {
+    throw new EnvironmentError(
+      `could not launch ${resolved.executablePath}: ${(error as Error).message}`,
+      { cause: error },
+    );
+  }
+
+  const failed: FailedRequest[] = [];
+  const requested: string[] = [];
+  let page: Page;
+  try {
+    const context: BrowserContext = await browser.newContext({ viewport: { ...VIEWPORT } });
+    page = await context.newPage();
+
+    page.on("request", (request) => requested.push(request.url()));
+    page.on("requestfailed", (request) => {
+      const failure = request.failure();
+      failed.push({ url: request.url(), reason: failure?.errorText ?? "request failed" });
+    });
+    page.on("response", (response) => {
+      if (response.status() >= 400) {
+        failed.push({ url: response.url(), reason: `HTTP ${String(response.status())}` });
+      }
+    });
+
+    await page.goto(options.url, { waitUntil: "load", timeout: timeoutMs });
+  } catch (error) {
+    await browser.close().catch(() => undefined);
+    throw new EnvironmentError(bridgeFailureMessage(options.url, error, failed), { cause: error });
+  }
+
+  return {
+    url: options.url,
+    evaluate: <T,>(expression: string) => page.evaluate<T>(expression),
+    fontsReady: () => page.evaluate<string[]>(FONTS_READY_EXPRESSION),
+    screenshot: async (selector: string) => {
+      const shot = await page.locator(selector).screenshot({ type: "png" });
+      return shot.toString("base64");
+    },
+    requests: () => [...requested],
+    failedRequests: () => [...failed],
+    close: async () => {
+      await browser.close();
+    },
+  };
+}
+
+export interface WithRasterPageOptions {
+  /** Directory to serve. The throwaway one holding the harness page. */
+  root: string;
+  /** Path under that directory to open. Defaults to `/`. */
+  path?: string | undefined;
+  chromium?: string | undefined;
+  headed?: boolean | undefined;
+  timeoutMs?: number | undefined;
+}
+
+/**
+ * Serve a directory, open a page in it, run `fn`, close both whatever happens.
+ *
+ * {@link withCanvas} for a page that is not the canvas. Layering rule 6 says a
+ * command never leaves a browser running, and this is the second place that
+ * promise is kept: one `finally`, and no verb of its own to forget.
+ */
+export async function withRasterPage<T>(
+  options: WithRasterPageOptions,
+  fn: (page: RasterPage) => Promise<T>,
+): Promise<T> {
+  let server: PageServer;
+  try {
+    server = await startPageServer({ root: options.root });
+  } catch (error) {
+    throw new EnvironmentError(`could not serve ${options.root}: ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
+
+  let page: RasterPage;
+  try {
+    page = await openRasterPage({
+      url: `${server.url}${options.path ?? "/"}`,
+      chromium: options.chromium,
+      headed: options.headed,
+      timeoutMs: options.timeoutMs,
+    });
+  } catch (error) {
+    await server.close();
+    throw error;
+  }
+
+  try {
+    return await fn(page);
+  } finally {
+    await page.close().catch(() => undefined);
+    await server.close();
+  }
+}
+
 /**
  * The expression `waitForFunction` polls until the bridge is up.
  *

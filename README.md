@@ -6,8 +6,8 @@ write code well and read images well but cannot see what they just drew unless
 something renders it.
 
 **Status: phase 4, complete.** Every verb in the reference works: `new`, `run`,
-`shot`, `inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api`
-and `doctor`.
+`shot`, `inspect`, `export`, `verify`, `from-mermaid`, `list`, `meta set`,
+`serve`, `api` and `doctor`.
 
 ## What it draws
 
@@ -169,6 +169,7 @@ tldrawkc shot diagram.tldr                # a PNG in the temp directory, path pr
 tldrawkc inspect diagram.tldr             # every shape, binding and lint. Exits 3 on lints
 tldrawkc export diagram.tldr --svg out.svg --png out.png
 tldrawkc export diagram.tldr --svg out.svg --no-subset-fonts   # whole fonts, for a hand edit
+tldrawkc verify out.svg                   # render the export back to a PNG and check it
 tldrawkc from-mermaid map.tldr --source map.mmd
 tldrawkc list                             # every .tldr in learn/assets, with its topic
 tldrawkc meta set diagram.tldr --topic dot-product
@@ -227,6 +228,36 @@ glyph for a letter the drawing does not already contain.
 `--json` reports `svg.bytes` and `svg.fontsSubset` on `export`, and `svgBytes`
 and `svgFontsSubset` on `run`. A face the subsetter cannot read keeps its whole
 payload and is named in `svg.fontWarnings`; subsetting never fails an export.
+
+#### Looking at the file you shipped
+
+The loop looks at a PNG, and that PNG is the canvas. The thing that gets
+committed is the SVG, and a committed SVG is 200 to 300 kB on one line, which
+the Read tool refuses on token count: nothing in the loop had ever opened one.
+
+`verify` is that step. It renders the export in Chromium the way a reader's
+browser would, writes a PNG small enough to read, and reports what the render
+showed:
+
+```
+$ tldrawkc verify learn/assets/dot-product.svg
+/tmp/tldrawkc-verify-dot-product-2026-09-13T15-10-44-011Z.png
+1500x1281 px, 4 checks, 549 ms
+ok    self-contained  nothing was fetched: the file carries everything it draws
+ok    fonts-applied   2 faces loaded (tldraw_draw, tldraw_sans), backing 35 text runs
+ok    text-visible    35 text runs, every one with a box inside the frame
+ok    declared-size   declared 1367x1167, viewBox 1367x1167, rendered 1500x1281 at 1.10x
+look at the PNG above: it is the exported file rendered, not the canvas.
+```
+
+A finding is exit 3, the way a lint is. The PNG is written either way, and it
+is the point of the command: the checks are what a browser can measure, and the
+picture is what the agent has to look at. Strip the `@font-face` blocks out of
+that file and `fonts-applied` fails, the labels come back in a system font, and
+the PNG shows them wrapping onto two lines.
+
+`verify` also takes a `.tldr`, which exports to a throwaway SVG first, so a
+document can be checked without an intermediate file to clean up.
 
 `from-mermaid` lifts an existing flowchart onto the canvas, which is the point
 of the whole tool for a repo whose diagrams are all mermaid today:
@@ -438,6 +469,7 @@ and `api` reads a file the build generated rather than doing the work itself.
 | `inspect` | `inspect` | `inspect(options: InspectOptions): Promise<InspectCommandResult>` |
 | `newDocument` | `new` | `newDocument(options: NewDocumentOptions): Promise<NewDocumentResult>` |
 | `exportCanvas` | `export` | `exportCanvas(options: ExportOptions): Promise<ExportResult>` |
+| `verify` | `verify` | `verify(options: VerifyOptions): Promise<VerifyResult>` |
 | `fromMermaid` | `from-mermaid` | `fromMermaid(options: FromMermaidOptions): Promise<FromMermaidResult>` |
 | `list` | `list` | `list(options?: ListOptions): Promise<ListResult>` |
 | `setMeta` | `meta set` | `setMeta(options: SetMetaOptions): Promise<SetMetaResult>` |
@@ -521,13 +553,14 @@ layer over it. The pieces worth knowing about:
 
 | Group | What it holds |
 | --- | --- |
-| Browser | `withCanvas`, `openCanvasPage`, `resolveChromium`, `installedBrowserPaths`, `isOffHost`, plus `BRIDGE_TIMEOUT_MS`, `EXEC_TIMEOUT_MS` and `VIEWPORT` |
+| Browser | `withCanvas`, `openCanvasPage`, `withRasterPage`, `openRasterPage`, `resolveChromium`, `installedBrowserPaths`, `isOffHost`, plus `BRIDGE_TIMEOUT_MS`, `EXEC_TIMEOUT_MS` and `VIEWPORT`. The two `Raster` ones open a page that is not the canvas, which is what `verify` renders an export in |
 | Lints | `hasBlockingLints`, `severityOf` |
 | Metadata | `readMeta`, `readTldrFacts`, `readDocumentMeta`, `applyMeta`, `mergeDocumentMeta`, `validatePatch`, `isEmptyPatch`, `stampSvg`, plus `META_KEY`, `META_VERSION`, `SLUG_PATTERN` and `SVG_TOPIC_ATTRIBUTE`. Pure functions over the file's JSON, so none of them launches a browser |
 | SVG fonts | `subsetSvgFonts`, `findFontFaces`, `spliceFontFaces`, `collectSvgCharacters`, `decodeEntities`, `SAFETY_CHARACTERS` |
+| Verify | `checksFor` and `buildHarness`, the pure halves of `verify`, plus `DEFAULT_VERIFY_WIDTH` and `MAX_VERIFY_HEIGHT`. `checksFor` takes one `SvgObservation` and returns the findings, so the rules can be exercised without a browser |
 | Helper reference | `buildApiReference`, `readApiSources`, `extractHelperDocs`, `selectHelperDocs` |
 | Servers | `startPageServer`, `startServeServer`, `mirrorUrl`, `resolveStaticPath`, `contentTypeFor`, `openInBrowser`, `openCommandFor`, plus `DEFAULT_SERVE_PORT`, `MAX_DOCUMENT_BYTES`, `MIRROR_QUERY`, `CONTENT_TYPES` and `FALLBACK_CONTENT_TYPE` |
-| Paths and files | `resolveTldrPath`, `resolveOutputPath`, `resolveListDir`, `siblingPath`, `tempShotPath`, `tempSiblingPath`, `relativeToDir`, `doctorProbePath`, `readText`, `writeText`, `writeAtomic`, `writePng`, `modifiedAt`, `newestMtime`, and the `PACKAGE_ROOT`, `DIST_DIR`, `PAGE_DIST_DIR`, `PAGE_INDEX_HTML`, `PAGE_SRC_DIR`, `HELPERS_SRC_DIR`, `API_JSON`, `API_SOURCE_FILES`, `CLI_ENTRY` and `DEFAULT_LIST_DIR` constants |
+| Paths and files | `resolveTldrPath`, `resolveOutputPath`, `resolveListDir`, `siblingPath`, `tempShotPath`, `tempVerifyPngPath`, `tempSiblingPath`, `relativeToDir`, `doctorProbePath`, `readText`, `writeText`, `writeAtomic`, `writePng`, `modifiedAt`, `newestMtime`, `removeDir`, and the `PACKAGE_ROOT`, `DIST_DIR`, `PAGE_DIST_DIR`, `PAGE_INDEX_HTML`, `PAGE_SRC_DIR`, `HELPERS_SRC_DIR`, `API_JSON`, `API_SOURCE_FILES`, `CLI_ENTRY` and `DEFAULT_LIST_DIR` constants |
 | Doctor | `isFontUrl`, `MINIMUM_NODE_MAJOR` |
 
 `serve` is the exception to every other verb. It returns while its server is
@@ -535,7 +568,8 @@ still listening, so the handle it hands back carries the `close()` the caller
 owes it, along with `url`, `port`, the resolved `file` and `fellBackFrom` when
 the port it asked for was taken. Every verb that opens a browser closes it
 before it resolves, in a `finally`, whether the call succeeded or threw, and
-`list`, `setMeta` and `readApiReference` never open one at all.
+`list`, `setMeta` and `readApiReference` never open one at all. `verify`
+resolves an `exitCode` of 0 or 3 the way `run` does, with `checks` beside it.
 
 ## For agents
 

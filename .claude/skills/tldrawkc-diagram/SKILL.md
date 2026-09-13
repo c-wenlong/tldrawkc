@@ -57,15 +57,21 @@ that instead of guessing at helper names.
    no improvement means return what you have and say plainly what is still
    wrong. Then `tldrawkc export <file> --svg <out.svg>`, which runs nothing
    and saves nothing, so the export cannot damage the document.
+6. **Look at the file you shipped.** `tldrawkc verify <out.svg>` renders the
+   export the way a reader's browser would and prints the path of a PNG small
+   enough to open with the Read tool; open it, and read the four checks. The
+   SVG itself is too big to read and the earlier screenshots were the canvas,
+   not the file. Exit 3 means a check failed and the export is not finished.
 
-Never report a diagram finished without having looked at the last screenshot.
+Never report a diagram finished without having looked at the last screenshot
+and at what `verify` rendered.
 
 ### Exit codes
 
 | Code | What happened | What to do |
 | --- | --- | --- |
 | 2 | The snippet threw. The page rolled back, the document is untouched. | Fix the snippet and run again. Subtract 2 from the reported line number: the wrapper adds a header. |
-| 3 | Saved, and lints remain. The work is real, so the file is written. | Read every lint and fix it. `--allow-lints` turns it into 0, for a stub or legend you meant to leave and never as a shortcut. |
+| 3 | Saved, and lints remain, or a `verify` check failed. The work is real, so the file is written. | Read every lint and fix it. `--allow-lints` turns it into 0, for a stub or legend you meant to leave and never as a shortcut; it does not apply to `verify`. |
 
 Each lint names its rule, the shape ids and what is wrong. A line beginning
 `warn` is a warning: printed, and never the reason for a non-zero exit. The

@@ -200,13 +200,16 @@ corrections are in [ARCHITECTURE.md](ARCHITECTURE.md) (serve mode's routes, the
 numbers) and [CLI.md](CLI.md) (`serve`, and `help` with nothing planned left in
 it).
 
-Two PRs landed beside the checklist in the same phase and closed gaps this
+Three PRs landed beside the checklist in the same phase and closed gaps this
 list had been carrying. PR #9 subsets the fonts an SVG export inlines, and
 verified it by rendering both committed diagrams in a real Chrome, which is
 also the first time an export had been opened in a browser at all (D38). PR
 #10 is the `missing-glyph` rule, the ninth, and the woff2 `cmap` reader behind
 it (D43); it corrected what this file used to say about `√` as well, since the
-measurement it needed is what showed the claim was wrong.
+measurement it needed is what showed the claim was wrong. PR #PR_NUMBER is
+`verify`, which turns PR #9's one-off render into a verb: it rasterises a
+committed export to a PNG the agent can read and reports four checks over the
+render, so looking at the shipped file is now a step rather than an errand.
 
 ## Known gaps after phase 4
 
@@ -215,8 +218,9 @@ rather than in a diagram that looks wrong. Entries leave this list when a PR
 closes them: phase 3 closed the two about an arrow crossing a shape and a
 snippet's stack, PR #8 closed three more by adding `line`, `alignContainers`
 and container size matching, PR #9 closed two by subsetting the fonts and
-rendering both committed exports in a real Chrome to compare them, and PR #10
-closed the one about maths labels going unwarned.
+rendering both committed exports in a real Chrome to compare them, PR #10
+closed the one about maths labels going unwarned, and PR #PR_NUMBER closed the
+one about the agent not being able to read its own export.
 
 - **A diamond's label can exceed its outline without a lint.**
   `unreadable-label` compares against the shape's width, and a diamond's
@@ -227,12 +231,6 @@ closed the one about maths labels going unwarned.
   multi-page document.** Every document drawn so far has had one page.
 - **Rendering on Linux has never been eyeballed.** CI runs the end-to-end
   suite there and asserts sizes and labels; nobody has looked at the output.
-- **The agent cannot read its own export.** A committed SVG lands at 200 to
-  300 kB, mostly path data now that the fonts are subset, and a file that size
-  is refused by the Read tool: it counts roughly 194000 tokens against a 25000
-  cap, and the export is one enormous line, so paging through it with `offset`
-  buys nothing. The loop already looks at the PNG instead, but "check the SVG
-  you shipped" is not a step that exists.
 - **The mirror tab carries tldraw's watermark.** `serve` mounts the full UI,
   and an unlicensed tldraw paints "Get a license for production" in the corner
   of it. Harmless for a local tab one person looks at, and it is in the

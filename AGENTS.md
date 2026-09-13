@@ -12,9 +12,9 @@ roadmap and the prior art.
 
 **Status: phase 4, complete.** Every verb in [docs/CLI.md](docs/CLI.md) is
 built: `new`, `run`,
-`shot`, `inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api`
-and `doctor`. `PLANNED_COMMANDS` in `src/cli/args.ts` is empty and stays as the
-place to name the next specified-but-unbuilt verb.
+`shot`, `inspect`, `export`, `verify`, `from-mermaid`, `list`, `meta set`,
+`serve`, `api` and `doctor`. `PLANNED_COMMANDS` in `src/cli/args.ts` is empty
+and stays as the place to name the next specified-but-unbuilt verb.
 
 ## What lives where
 
@@ -28,6 +28,7 @@ place to name the next specified-but-unbuilt verb.
 | `src/lib/browser.ts` | resolving Chromium, opening the page, the typed wrapper over every bridge call, and `withCanvas` |
 | `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port, plus the three `/api/*` routes serve mode mounts over one `.tldr` |
 | `src/lib/serve.ts` | `serve`: start that server on a fixed port, open the machine's own browser, hand back a handle the caller closes |
+| `src/lib/verify.ts` | `verify`: render a finished SVG in a page that is not the canvas, measure it, and report the four checks. The rules are pure functions over one measurement |
 | `src/lib/canvas.ts` | one function per verb that needs a browser: `run`, `shot`, `newDocument`, `inspect`, `exportCanvas`, `fromMermaid`. Takes data, returns data |
 | `src/lib/fonts.ts` | the SVG font subsetter: which characters a document draws, and the `@font-face` surgery. Pure apart from the one call into harfbuzz |
 | `src/lib/meta.ts` | the document metadata: the shape, the `.tldr` JSON surgery, `meta set`, and the SVG stamp. No browser |
@@ -114,13 +115,15 @@ Bump the two together or not at all.
 
 ## Verbs
 
-Three of them are not in `canvas.ts` at all. `list` and `meta set` never open a
+Four of them are not in `canvas.ts` at all. `list` and `meta set` never open a
 browser: one walks a directory and parses JSON, the other rewrites one record
 in a `.tldr`. Putting them through `withCanvas` would buy nothing and cost a
 Chromium launch per call, and a catalog runs `list` on every index. `serve` is
 the third, for the opposite reason: it wants the human's own browser rather
 than a headless one this process owns, so it lives in `src/lib/serve.ts` and
-never calls `withCanvas`. Add a verb to `canvas.ts` when it needs a live
+never calls `withCanvas`. `verify` is the fourth: it opens a browser and no
+editor, because what it renders is a finished SVG, so it goes through
+`withRasterPage` instead. Add a verb to `canvas.ts` when it needs a live
 editor, and beside it when it does not.
 
 Every other verb is one function in `src/lib/canvas.ts` that takes an options
@@ -210,6 +213,37 @@ The one long-lived command, and the only place two of the rules bend.
   `dist/page/favicon.ico` if one ever lands there, so the 204 cannot quietly
   shadow an icon someone added.
 
+### verify
+
+The one verb that opens a browser and never opens the canvas. Four things to
+know before touching it.
+
+- **The SVG is parsed as XML, not pasted into the page.** `DOMParser` with
+  `image/svg+xml` is how a reader's browser parses an SVG it loads as an image,
+  and the HTML parser is not: it forgives a malformed tag that an `<img>`
+  renders as nothing at all. A file that only survives the lenient parser is
+  already broken for its actual audience, so that is exit 1 and not a finding.
+- **The file travels in a JSON script block.** The harness page holds it in a
+  `<script type="application/json">` with every `<` escaped, so the browser
+  never parses it as markup before the check that parses it as XML, and a
+  `</script>` inside the file cannot end the block early.
+- **Any request at all is a finding.** The harness is one document with the SVG
+  inside it and a `data:` favicon, so `self-contained` counts every request
+  that is not the page itself, same-origin ones included. An `<img>` embed
+  would not even attempt them, which is worse than a failure: the picture
+  silently loses whatever it was.
+- **`document.fonts` is the oracle, and only `error` is a failure.** A declared
+  face that nothing uses sits at `unloaded` forever, which is what a family the
+  subsetter dropped looks like and is not a problem. What `fonts-applied`
+  actually asks is the other direction: does every rendered text run name a
+  family some **loaded** face provides. `document.fonts.check()` cannot answer
+  that, for the reason recorded in the gotchas below.
+
+`text-visible` is deliberately a layout claim. Nothing reads the raster back,
+so it cannot say a label is legible or that nothing was drawn over it, and the
+detail line is worded so it never implies otherwise. The PNG is the answer to
+the rest, which is the whole reason the command returns one.
+
 ### Exit codes
 
 A failure is one of the classes in `src/lib/errors.ts` and carries its own
@@ -227,7 +261,9 @@ act on.
 
 Exit 3 is not an error. The command succeeded, so `run` returns normally with
 its `lints` list and an `exitCode` of 3, and `--allow-lints` turns that into 0.
-The file is saved either way, because the work is real.
+The file is saved either way, because the work is real. `verify` uses the same
+code for the same reason: a check failed, the PNG is still written, and the
+non-zero code stops an agent calling the export finished.
 
 A lint carries an optional `severity`. Absent means `error`, which is what
 drives exit 3; `warn` is printed and ignored by the exit code. `missing-topic`
@@ -314,8 +350,11 @@ that bite:
    from one call.
 4. **Nothing outside `src/lib/paths.ts` builds a path.**
 5. **Every file write is atomic** and goes through `src/lib/files.ts`.
-6. **A command never leaves a browser running.** `withCanvas` is the only
-   place that opens one, and it closes it in a `finally`.
+6. **A command never leaves a browser running.** `withCanvas` and
+   `withRasterPage` are the only two places that open one, both in
+   `browser.ts`, and both close it in a `finally`. `withCanvas` is the canvas
+   with the bridge answering; `withRasterPage` is a page with no bridge at all,
+   which is the only thing `verify` needs.
 7. **No network access at runtime.** The page bundle is self-contained, fonts
    included.
 

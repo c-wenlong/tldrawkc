@@ -219,6 +219,81 @@ loaded as an image fetches nothing and a missing family silently falls back
 to a system font. Subsetting never fails an export: a face harfbuzz cannot
 read keeps its whole payload and becomes a warning.
 
+### `verify <file.svg|file.tldr> [-o|--output <out.png>] [--width <px>]`
+
+Renders a finished SVG back to a PNG the agent can read, and checks what the
+render showed. It is the other half of the loop: `--shot` looks at the canvas,
+this looks at the file that gets committed. A committed export is 200 to 300 kB
+on one line, which the Read tool refuses on token count, so opening one was not
+a step that existed.
+
+Nothing is written except the PNG. The SVG is never touched, and neither is the
+`.tldr` behind it.
+
+| Option | What |
+| --- | --- |
+| `-o, --output <out.png>` | Where the PNG goes. Without it, the system temp directory as `tldrawkc-verify-<basename>-<timestamp>.png`, and the path is printed |
+| `--width <px>` | Raster width, default 1500. The height follows the file's own aspect ratio, capped at 2000 px, which lowers the width to match |
+
+1500 is sized against the reader rather than the drawing: the Read tool scales
+an image to about 1568 px on its longest edge before it looks at it, so a wider
+raster is bytes with no legibility behind them. The height cap is the same
+argument for a tall diagram, where the long edge is the height and a full-width
+render would be downscaled to an unreadable width.
+
+Naming a `.tldr` is sugar: it is exported to a throwaway SVG in a temp
+directory, that is what gets verified, and the directory goes away on the way
+out. `svg` in the output is `null` in that case rather than a path that no
+longer exists.
+
+The file is parsed with `DOMParser` as `image/svg+xml`, which is how a reader's
+browser parses an SVG loaded as an image, and not by the lenient HTML parser. A
+file that is not well-formed XML renders as nothing in an `<img>`, so it is
+exit **1** with the parser's own message, not a finding.
+
+#### The checks
+
+| Rule | Fails when |
+| --- | --- |
+| `self-contained` | The page fetched anything at all beyond the page itself: a font at a URL, a linked image, a stylesheet. In an `<img>` embed none of them would even be attempted, which is worse than a failed one, because the picture silently loses whatever it was |
+| `fonts-applied` | A rendered text run names a font family that no loaded `@font-face` provides, or a declared face failed to load. That is what a stripped `@font-face` block, a `src` pointing somewhere that did not answer, and a family renamed by a bad edit all look like: the labels are still there, in a system font nobody chose. A run whose whole stack is generic names no face and is not a finding |
+| `text-visible` | A text run has no box, or its box falls outside the exported frame. **A layout claim, not a pixel one**: nothing here reads the raster back, so it cannot say a label is legible or that nothing is drawn over it. That is what the PNG is for |
+| `declared-size` | The root `<svg>` declares no `width` and `height` (an `<img>` then sizes it 300x150 and squashes the drawing into it), the `viewBox` disagrees with the declared aspect ratio by more than 1%, or the browser laid it out at a different shape again |
+
+There is no OCR in this tool, so there is deliberately no check that a string in
+the file came out in the picture. `text-visible` is as far as a measurement can
+honestly go, and the PNG is the answer to the rest.
+
+Output (`--json`):
+
+```json
+{
+  "file": "/home/you/notes/assets/dot-product.svg",
+  "svg": "/home/you/notes/assets/dot-product.svg",
+  "png": "/tmp/tldrawkc-verify-dot-product-2026-09-13T15-10-44-011Z.png",
+  "width": 1500,
+  "height": 1281,
+  "checks": [
+    { "rule": "self-contained", "ok": true, "detail": "nothing was fetched: the file carries everything it draws" },
+    { "rule": "fonts-applied", "ok": true, "detail": "2 faces loaded (tldraw_draw, tldraw_sans), backing 35 text runs" },
+    { "rule": "text-visible", "ok": true, "detail": "35 text runs, every one with a box inside the frame" },
+    { "rule": "declared-size", "ok": true, "detail": "declared 1367x1167, viewBox 1367x1167, rendered 1500x1281 at 1.10x" }
+  ],
+  "ms": 549
+}
+```
+
+`file` is what was named; `svg` is the SVG that was rendered, which is the same
+path, or `null` when a `.tldr` was named and the export was a throwaway.
+`width` and `height` are the PNG's own pixels, read from its IHDR chunk.
+`detail` is filled in whether the rule passed or failed, so a green run still
+says what was measured.
+
+Exit **3** when a check failed, matching the lint convention: the command
+succeeded, the PNG is written, and the non-zero code stops an agent from
+declaring the export finished. Exit **1** for a file that is missing, empty,
+not an SVG, or not well-formed XML.
+
 ### `from-mermaid <file.tldr> --source <diagram.mmd> [--append] [--shot <out.png>]`
 
 Builds a document from a mermaid `flowchart` or `graph` definition
@@ -456,7 +531,7 @@ makes such a verb fail with "not built yet" rather than "unknown command".
 | 0 | Done, no lints |
 | 1 | Bad arguments, missing file, environment failure (`doctor` failed) |
 | 2 | The snippet threw. Nothing was written. |
-| 3 | Done and saved, but lints remain. The agent should read them and run again. |
+| 3 | Done and saved, but lints remain, or a `verify` check failed. The agent should read them and run again. |
 | 4 | Export failed after a successful save (the `.tldr` is safe, the PNG or SVG is not) |
 
 `3` is deliberate: the file is saved because the work is real, but the

@@ -95,6 +95,48 @@ export function tempShotPath(
 }
 
 /**
+ * Where `verify`'s raster goes when the caller did not name one.
+ *
+ * Beside {@link tempShotPath} rather than folded into it, because the two
+ * pictures answer different questions and an agent with both in `/tmp` should
+ * be able to tell them apart by name: one is the canvas, the other is the
+ * exported file rendered back.
+ */
+export function tempVerifyPngPath(
+  svgPath: string,
+  now: Date = new Date(),
+  tmpDir: string = os.tmpdir(),
+): string {
+  const base = path.basename(svgPath, path.extname(svgPath)) || "diagram";
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  return path.join(tmpDir, `tldrawkc-verify-${base}-${stamp}.png`);
+}
+
+/**
+ * The throwaway directory `verify` serves its harness page from.
+ *
+ * A directory of its own per run, in the system temp directory, because the
+ * page server serves a whole root and the root of a verify run should hold
+ * exactly the two files that run wrote. Removed in a `finally`.
+ */
+export function tempVerifyDir(tmpDir: string = os.tmpdir()): string {
+  return path.join(tmpDir, `tldrawkc-verify-${process.pid.toString(36)}-${randomUUID()}`);
+}
+
+/** The harness page inside a {@link tempVerifyDir}: what `/` serves. */
+export const VERIFY_HARNESS_FILE = "index.html";
+
+/** That page's path on disk. */
+export function verifyHarnessPath(dir: string): string {
+  return path.join(dir, VERIFY_HARNESS_FILE);
+}
+
+/** The SVG `verify <file.tldr>` exports into a {@link tempVerifyDir} first. */
+export function tempVerifySvgPath(dir: string): string {
+  return path.join(dir, "exported.svg");
+}
+
+/**
  * The sibling temp file an atomic write goes through.
  *
  * Same directory as the target, because `rename` is only atomic within one
