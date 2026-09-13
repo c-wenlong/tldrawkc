@@ -21,9 +21,11 @@ export {
   installedBrowserPaths,
   isOffHost,
   openCanvasPage,
+  openRasterPage,
   resolveChromium,
   VIEWPORT,
   withCanvas,
+  withRasterPage,
   type Bounds,
   type BridgeMethod,
   type CanvasHandle,
@@ -37,7 +39,9 @@ export {
   type LintSeverity,
   type LoadResult,
   type OpenCanvasOptions,
+  type OpenRasterPageOptions,
   type PingResult,
+  type RasterPage,
   type ResolveChromiumOptions,
   type ResolvedChromium,
   type SetPageResult,
@@ -46,6 +50,7 @@ export {
   type SvgOptions,
   type SvgResult,
   type WithCanvasOptions,
+  type WithRasterPageOptions,
 } from "./browser.js";
 
 export {
@@ -150,6 +155,7 @@ export {
   modifiedAt,
   newestMtime,
   readText,
+  removeDir,
   writeAtomic,
   writePng,
   writeText,
@@ -174,6 +180,11 @@ export {
   siblingPath,
   tempShotPath,
   tempSiblingPath,
+  tempVerifyDir,
+  tempVerifyPngPath,
+  tempVerifySvgPath,
+  VERIFY_HARNESS_FILE,
+  verifyHarnessPath,
 } from "./paths.js";
 
 export {
@@ -193,6 +204,18 @@ export {
   type StartPageServerOptions,
   type StartServeServerOptions,
 } from "./server.js";
+
+export {
+  buildHarness,
+  checksFor,
+  verify,
+  DEFAULT_VERIFY_WIDTH,
+  MAX_VERIFY_HEIGHT,
+  type SvgObservation,
+  type VerifyCheck,
+  type VerifyOptions,
+  type VerifyResult,
+} from "./verify.js";
 
 export {
   openCommandFor,

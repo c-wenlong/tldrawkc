@@ -9,6 +9,7 @@
  *   tldrawkc list [dir]               every .tldr in a directory, with its metadata
  *   tldrawkc meta set <file.tldr>     stamp a topic on an existing document
  *   tldrawkc export <file.tldr> ...   the SVG or PNG that gets committed
+ *   tldrawkc verify <file.svg>        render a committed export back to a PNG and check it
  *   tldrawkc from-mermaid <file.tldr> lift a mermaid flowchart onto the canvas
  *   tldrawkc serve <file.tldr>        mirror a document in a real browser tab
  *   tldrawkc api                      what a snippet can call
@@ -44,6 +45,7 @@ import { list, type ListResult } from "../lib/list.js";
 import { setMeta, type DiagramMeta, type MetaPatch, type SetMetaResult } from "../lib/meta.js";
 import { doctor, type DoctorReport } from "../lib/doctor.js";
 import { serve, type ServeHandle } from "../lib/serve.js";
+import { verify, type VerifyResult } from "../lib/verify.js";
 import { isTldrawkcError, SnippetError, UsageError } from "../lib/errors.js";
 import { readText } from "../lib/files.js";
 import { resolveOutputPath } from "../lib/paths.js";
@@ -103,6 +105,9 @@ Commands
       --png <out.png>            PNG at --pixel-ratio
       --ids a,b,c                frame only these shapes
       --no-subset-fonts          inline whole fonts instead, for an SVG to be hand edited
+  verify <file.svg|file.tldr>    render a committed export back to a PNG and check it. Exits 3 on a finding
+      -o, --output <out.png>     where the PNG goes (default: a temp file)
+      --width <px>               raster width (default 1500, height capped at 2000)
   from-mermaid <file.tldr>       build a document from a mermaid flowchart
       --source <path.mmd>        the flowchart, or - to read stdin
       --append                   add to an existing document instead of refusing
@@ -131,7 +136,7 @@ Environment
   TLDRAWKC_HEADED                1 to default --headed on
 
 Exit codes
-  0 done   1 usage or environment   2 snippet threw   3 lints remain   4 export failed`;
+  0 done   1 usage or environment   2 snippet threw   3 lints remain or a verify check failed   4 export failed`;
 
 /**
  * One line of untrusted text, safe to write to a terminal.
@@ -542,6 +547,57 @@ function printFromMermaid(result: FromMermaidResult, allowLints: boolean): void 
   if (result.lints.length > 0 && allowLints) out("lints allowed (--allow-lints), exiting 0");
 }
 
+/**
+ * The checks, then the one line that says what to do next.
+ *
+ * The PNG's path is printed first and named again at the end, because it is
+ * the point of the command: the checks are what a browser could measure, and
+ * the picture is what the agent has to look at.
+ */
+function printVerify(result: VerifyResult): void {
+  out(result.png);
+  out(
+    `${String(result.width)}x${String(result.height)} px, ` +
+      `${String(result.checks.length)} checks, ${String(result.ms)} ms`,
+  );
+  if (result.svg === null) out(`from  ${result.file}, exported to a temp SVG for the check`);
+  for (const check of result.checks) {
+    out(`${check.ok ? "ok  " : "FAIL"}  ${check.rule.padEnd(15)} ${check.detail}`);
+  }
+  out("look at the PNG above: it is the exported file rendered, not the canvas.");
+}
+
+async function runVerify(
+  file: string,
+  globals: GlobalOptions,
+  options: CommandOptions,
+): Promise<number> {
+  const result = await verify({
+    file,
+    output: options.output,
+    width: options.width,
+    padding: globals.padding,
+    pixelRatio: globals.pixelRatio,
+    chromium: globals.chromium,
+    headed: globals.headed,
+  });
+
+  if (globals.json) {
+    printJson({
+      file: result.file,
+      svg: result.svg,
+      png: result.png,
+      width: result.width,
+      height: result.height,
+      checks: result.checks,
+      ms: result.ms,
+    });
+  } else if (!globals.quiet) {
+    printVerify(result);
+  }
+  return result.exitCode;
+}
+
 async function runFromMermaid(
   file: string,
   globals: GlobalOptions,
@@ -733,6 +789,8 @@ async function main(): Promise<number> {
       return await runExport(file, globals, options);
     case "from-mermaid":
       return await runFromMermaid(file, globals, options);
+    case "verify":
+      return await runVerify(file, globals, options);
     case "serve":
       return await runServe(file, globals, options);
     case "api":

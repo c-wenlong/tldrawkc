@@ -106,6 +106,18 @@ export async function writePng(target: string, base64: string): Promise<string> 
   return writeAtomic(target, Buffer.from(payload, "base64"));
 }
 
+/**
+ * Remove a directory and everything under it, and never complain.
+ *
+ * For the throwaway directory `verify` serves its harness page from, which is
+ * cleaned up in a `finally` where a second failure would hide the first. Every
+ * other write in this tool is atomic and permanent; this is the one temporary
+ * tree the tool owns end to end.
+ */
+export async function removeDir(dir: string): Promise<void> {
+  await fs.rm(dir, { recursive: true, force: true });
+}
+
 /** Read UTF-8 text. Returns `null` when the file does not exist. */
 export async function readText(source: string): Promise<string | null> {
   try {

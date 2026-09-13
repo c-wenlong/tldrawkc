@@ -8,9 +8,9 @@
  * phase 4.
  *
  * So this mocks `browser.ts` and records the options object every verb hands
- * `withCanvas`, which is the one place `headless: !options.headed` is read. No
- * Chromium is launched and no page is served: what is under test is the
- * plumbing, not the browser.
+ * `withCanvas` or `withRasterPage`, which are the two places
+ * `headless: !options.headed` is read. No Chromium is launched and no page is
+ * served: what is under test is the plumbing, not the browser.
  *
  * Both of the environment's answers are stood in for, and both have to be.
  * `doctor` is the one verb that decides for itself whether to open a browser
@@ -48,10 +48,16 @@ vi.mock("../../src/lib/paths.js", async (importOriginal) => {
 });
 
 import type * as BrowserModule from "../../src/lib/browser.js";
-import type { Bounds, CanvasHandle, WithCanvasOptions } from "../../src/lib/browser.js";
+import type {
+  Bounds,
+  CanvasHandle,
+  RasterPage,
+  WithCanvasOptions,
+  WithRasterPageOptions,
+} from "../../src/lib/browser.js";
 
-/** Every options object `withCanvas` was called with, in order. */
-const calls: WithCanvasOptions[] = [];
+/** Every options object a browser opener was called with, in order. */
+const calls: Array<WithCanvasOptions | WithRasterPageOptions> = [];
 
 vi.mock("../../src/lib/browser.js", async (importOriginal) => {
   const actual = await importOriginal<typeof BrowserModule>();
@@ -71,6 +77,12 @@ vi.mock("../../src/lib/browser.js", async (importOriginal) => {
       calls.push(options);
       return fn(standInCanvas());
     }),
+    withRasterPage: vi.fn(
+      <T,>(options: WithRasterPageOptions, fn: (page: RasterPage) => Promise<T>) => {
+        calls.push(options);
+        return fn(standInRasterPage());
+      },
+    ),
   };
 });
 
@@ -78,6 +90,7 @@ const { exportCanvas, fromMermaid, inspect, newDocument, run, shot } = await imp
   "../../src/lib/canvas.js"
 );
 const { doctor } = await import("../../src/lib/doctor.js");
+const { verify } = await import("../../src/lib/verify.js");
 const { PAGE_DIST_DIR: STAND_IN_PAGE_DIR } = await import("../../src/lib/paths.js");
 
 // Tidy up the stand-in bundle, and only ever that one: if the mock above ever
@@ -147,14 +160,46 @@ function standInCanvas(): CanvasHandle {
   };
 }
 
+/**
+ * The page `verify` measures in, answering the least that is valid.
+ *
+ * The measurement it hands back is a clean render, because what is under test
+ * here is the flag and not the rules: those are `test/unit/verify.test.ts`.
+ */
+function standInRasterPage(): RasterPage {
+  return {
+    url: "http://127.0.0.1:0/",
+    evaluate: <T,>() =>
+      Promise.resolve({
+        ok: true,
+        observation: {
+          declared: { width: "100", height: "100", viewBox: "0 0 100 100" },
+          intrinsic: { width: 100, height: 100 },
+          viewBox: { width: 100, height: 100 },
+          rendered: { width: 100, height: 100 },
+          faces: [],
+          runs: [],
+        },
+      } as T),
+    fontsReady: () => Promise.resolve(["tldraw_draw"]),
+    screenshot: () => Promise.resolve(TINY_PNG),
+    requests: () => ["http://127.0.0.1:0/"],
+    failedRequests: () => [],
+    close: () => Promise.resolve(undefined),
+  };
+}
+
 let dir: string;
 let file: string;
+let svg: string;
 
 beforeEach(async () => {
   calls.length = 0;
   dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "tldrawkc-headed-")));
   file = path.join(dir, "diagram.tldr");
+  svg = path.join(dir, "diagram.svg");
   await fs.writeFile(file, EMPTY_DOCUMENT);
+  await fs.writeFile(svg, '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"></svg>');
 });
 
 afterEach(async () => {
@@ -202,6 +247,8 @@ const VERBS: Record<string, (headed: boolean | undefined) => Promise<unknown>> =
       headed,
     }),
   doctor: (headed) => doctor({ cwd: dir, headed }),
+  verify: (headed) =>
+    verify({ file: svg, output: path.join(dir, "verify.png"), cwd: dir, headed }),
 };
 
 describe("--headed", () => {
@@ -220,10 +267,10 @@ describe("--headed", () => {
   }
 
   it("covers every verb that opens a browser", () => {
-    // The list this file is asserting over. A new verb that calls `withCanvas`
+    // The list this file is asserting over. A new verb that opens a browser
     // and is not here would pass by not being tested at all.
     expect(Object.keys(VERBS).sort()).toEqual(
-      ["doctor", "export", "from-mermaid", "inspect", "new", "run", "shot"].sort(),
+      ["doctor", "export", "from-mermaid", "inspect", "new", "run", "shot", "verify"].sort(),
     );
   });
 });
