@@ -102,6 +102,10 @@ export const COMMAND_OPTIONS = {
     append: { type: "boolean" },
     shot: { type: "string" },
   },
+  serve: {
+    port: { type: "string" },
+    "no-open": { type: "boolean" },
+  },
   meta: META_OPTIONS,
 } as const satisfies Record<string, OptionsConfig>;
 
@@ -113,6 +117,7 @@ const ALL_OPTIONS: OptionsConfig = {
   ...COMMAND_OPTIONS.new,
   ...COMMAND_OPTIONS.export,
   ...COMMAND_OPTIONS["from-mermaid"],
+  ...COMMAND_OPTIONS.serve,
   ...COMMAND_OPTIONS.meta,
 };
 
@@ -181,6 +186,10 @@ export interface CommandOptions {
   title: string | undefined;
   /** `--topic` on `new` and `meta set`. */
   topic: string | undefined;
+  /** `serve --port <n>`, or nothing for the default. */
+  port: number | undefined;
+  /** False when `serve --no-open` was passed. */
+  open: boolean;
   /**
    * `--concept` on `new` and `meta set`, repeatable.
    *
@@ -216,6 +225,7 @@ export const IMPLEMENTED_COMMANDS = [
   "meta",
   "new",
   "run",
+  "serve",
   "shot",
 ] as const;
 
@@ -223,10 +233,12 @@ export const IMPLEMENTED_COMMANDS = [
  * Commands CLI.md specifies but this phase does not build yet, with the
  * roadmap phase that brings each one. Naming them gives a caller a real
  * answer instead of "unknown command".
+ *
+ * Empty since phase 4 built `serve`, and kept rather than deleted: the next
+ * specified-but-unbuilt verb should be one line here and in the help, not a
+ * new mechanism. `help` prints the section only when there is something in it.
  */
-export const PLANNED_COMMANDS: Record<string, string> = {
-  serve: "phase 4",
-};
+export const PLANNED_COMMANDS: Record<string, string> = {};
 
 /**
  * How many positionals each command takes, and what to call them when it is
@@ -245,6 +257,7 @@ const ARITY: Record<string, { min: number; max: number; shape: string }> = {
   inspect: { min: 1, max: 1, shape: "<file.tldr>" },
   export: { min: 1, max: 1, shape: "<file.tldr>" },
   "from-mermaid": { min: 1, max: 1, shape: "<file.tldr>" },
+  serve: { min: 1, max: 1, shape: "<file.tldr>" },
   list: { min: 0, max: 1, shape: "[dir]" },
   meta: { min: 2, max: 2, shape: "set <file.tldr>" },
 };
@@ -344,6 +357,9 @@ export function parseCommand(
   );
   if (!pixelRatio.ok) return pixelRatio;
 
+  const port = portOption(values["port"] as string | undefined);
+  if (!port.ok) return port;
+
   const code = values["code"] as string | undefined;
   const evalSource = values["eval"] as string | undefined;
   if (code !== undefined && evalSource !== undefined) {
@@ -386,6 +402,10 @@ export function parseCommand(
         append: values["append"] === true,
         title: values["title"] as string | undefined,
         topic: values["topic"] as string | undefined,
+        port: port.value,
+        // Same inversion as `--no-save`: `parseArgs` has no negation, so the
+        // flag CLI.md names is parsed literally and flipped here.
+        open: values["no-open"] !== true,
         concepts: splitRepeated(values["concept"] as string[] | undefined),
       },
     },
@@ -440,6 +460,26 @@ function numberOption(raw: string | undefined, flag: string, fallback: number): 
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) {
     return { ok: false, error: `${flag} expects a non-negative number, got "${raw}".` };
+  }
+  return { ok: true, value };
+}
+
+type PortResult = { ok: true; value: number | undefined } | { ok: false; error: string };
+
+/**
+ * `--port`, which is stricter than the other numeric flags.
+ *
+ * A port is a whole number in 0 to 65535, and 0 means "any free one". A
+ * fractional or out-of-range value would otherwise reach `listen`, which
+ * reports it as a range error from deep inside Node rather than as the typo it
+ * is. Absent stays `undefined` so the default in `server.ts` is the only place
+ * that knows the number.
+ */
+function portOption(raw: string | undefined): PortResult {
+  if (raw === undefined) return { ok: true, value: undefined };
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 65535) {
+    return { ok: false, error: `--port expects a whole number from 0 to 65535, got "${raw}".` };
   }
   return { ok: true, value };
 }

@@ -201,8 +201,23 @@ rebuilds, not a teaching diagram.
 
 ## For a human watching
 
-`serve`, which would open the canvas in a browser tab and reload as the agent
-writes it, is phase 4 and not built yet. Until it lands a human looks at the
-exported SVG, or opens the `.tldr` in a tldraw app of their own.
+`serve` opens the canvas in a real browser tab and keeps it up to date while
+the agent draws:
 
-Verified against tldrawkc 0.1.0, phase 3.
+```bash
+npm run --silent canvas -- serve learn/assets/x.tldr
+```
+
+It prints the URL, opens the machine's own browser at it, and runs until
+Ctrl+C. The tab polls the file once a second and reloads when it changes,
+without moving the camera, so a `run` in another terminal shows up there within
+a second. The person watching gets tldraw's full UI: they can drag a shape or
+retype a label, and Cmd+S (Ctrl+S elsewhere) writes the document back to the
+same `.tldr`, which the next `inspect` or `export` then reads. Nothing else in
+the tab writes the file.
+
+Two writers on one file, last write wins. If a reload lands on top of unsaved
+edits the tab says so in a banner. Offer `serve` when the person wants to watch
+or nudge; the agent's own loop still runs headless and does not need it.
+
+Verified against tldrawkc 0.1.0, phase 4.

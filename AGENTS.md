@@ -9,9 +9,10 @@ This file is the operating manual. [README.md](README.md) says what the tool
 is for; the design docs it is built from live in the self-learn repo (see
 "Where the design lives" below).
 
-**Status: phase 3.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
-`list`, `meta set`, `api` and `doctor` work. `serve` is specified and not
-written yet; `tldrawkc help` lists which phase brings it.
+**Status: phase 4, complete.** Every verb in CLI.md is built: `new`, `run`,
+`shot`, `inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api`
+and `doctor`. `PLANNED_COMMANDS` in `src/cli/args.ts` is empty and stays as the
+place to name the next specified-but-unbuilt verb.
 
 ## What lives where
 
@@ -23,7 +24,8 @@ written yet; `tldrawkc help` lists which phase brings it.
 | `src/lib/paths.ts` | every path the tool computes. Nothing else builds one |
 | `src/lib/files.ts` | every file write, all atomic (temp sibling, then rename) |
 | `src/lib/browser.ts` | resolving Chromium, opening the page, the typed wrapper over every bridge call, and `withCanvas` |
-| `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port |
+| `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port, plus the three `/api/*` routes serve mode mounts over one `.tldr` |
+| `src/lib/serve.ts` | `serve`: start that server on a fixed port, open the machine's own browser, hand back a handle the caller closes |
 | `src/lib/canvas.ts` | one function per verb that needs a browser: `run`, `shot`, `newDocument`, `inspect`, `exportCanvas`, `fromMermaid`. Takes data, returns data |
 | `src/lib/fonts.ts` | the SVG font subsetter: which characters a document draws, and the `@font-face` surgery. Pure apart from the one call into harfbuzz |
 | `src/lib/meta.ts` | the document metadata: the shape, the `.tldr` JSON surgery, `meta set`, and the SVG stamp. No browser |
@@ -92,6 +94,14 @@ A browser the caller **named** is not a suggestion: when `--chromium` or
 a reason to fall through to a different browser. The whole point of naming one
 is to control which engine drew the picture. Only steps 3 and 4 fall through.
 
+`--headed` shows the window, and it reaches `withCanvas` from every verb that
+opens one: `run`, `shot`, `new`, `inspect`, `export`, `from-mermaid` and
+`doctor`. It is a flag that fails silently when a verb drops it, since nothing
+errors and a window simply never appears, so `test/unit/headed.test.ts` records
+the options each verb passes and asserts the list of verbs as well. A headed
+Chromium needs a display: macOS always has one, a Linux runner needs
+`xvfb-run`, and `test/e2e/headed.test.ts` skips without either.
+
 `playwright` is a devDependency pinned to the **exact same version** as
 `playwright-core`. It has no install script of its own (checked against
 1.63.0: the published `package.json` has no `scripts` block at all), so it
@@ -102,11 +112,14 @@ Bump the two together or not at all.
 
 ## Verbs
 
-Two of them are not in `canvas.ts` at all. `list` and `meta set` never open a
+Three of them are not in `canvas.ts` at all. `list` and `meta set` never open a
 browser: one walks a directory and parses JSON, the other rewrites one record
 in a `.tldr`. Putting them through `withCanvas` would buy nothing and cost a
-Chromium launch per call, and a catalog runs `list` on every index. Add a verb
-to `canvas.ts` when it needs a live editor, and beside it when it does not.
+Chromium launch per call, and a catalog runs `list` on every index. `serve` is
+the third, for the opposite reason: it wants the human's own browser rather
+than a headless one this process owns, so it lives in `src/lib/serve.ts` and
+never calls `withCanvas`. Add a verb to `canvas.ts` when it needs a live
+editor, and beside it when it does not.
 
 Every other verb is one function in `src/lib/canvas.ts` that takes an options
 object and returns a result object. None of them print, none of them exit, and none
@@ -151,6 +164,49 @@ available here. It also embeds the flowchart into the snippet as JSON and
 parses it back at runtime rather than concatenating it into the program text: a
 diagram is arbitrary text, and one quote in a node label would otherwise end
 the literal and let the rest of the file run as code.
+
+### serve
+
+The one long-lived command, and the only place two of the rules bend.
+
+- **It keeps a server and a browser alive on purpose.** Layering rule 6 says a
+  command never leaves a browser running, and `serve` is the named exception in
+  the design docs: it runs until SIGINT. The CLI owns that wait, in
+  `untilSignal()`, and closes the server before returning 0. Nothing in
+  `src/lib/serve.ts` waits or prints.
+- **The signal listener goes on before the server, not after the URL.**
+  `watchForSignal()` is called first and awaited last. Installing it by
+  awaiting it at the end left a window between the URL reaching stdout and the
+  handler existing, and a Ctrl+C or a script that reads the URL and kills at
+  once met Node's default handling: exit 130, server never closed. Anything
+  added to `runServe` goes between the two, never before the watch.
+- **The browser is not Chromium.** `serve` spawns the platform's own opener
+  (`open`, `xdg-open`, `cmd /c start`), detached, with every failure ignored:
+  the URL is already on stdout, so a box with no opener should still serve the
+  page. `--no-open` skips it. Do not reach for `withCanvas` here, and do not add
+  a dependency to open a URL.
+- **The `/api/*` routes exist only in serve mode.** `startServeServer` mounts
+  them; `startPageServer`, which every headless verb uses, does not. That is
+  layering rule 2 enforced by the server rather than promised by the page: a
+  snippet runs with the page's full power, so an `/api/document` that were
+  always mounted would be a write to any file behind one `fetch`.
+  `test/unit/serve.test.ts` asserts a headless server 404s it.
+- **A PUT is checked before anything touches disk.** Over 50 MB is 413, not
+  JSON or no `tldrawFileFormatVersion` is 400, and the write itself goes
+  through `files.ts` like every other one. An oversized body is drained and the
+  connection closed, never destroyed: destroying the request destroys the
+  response with it, and the client waits for a 413 that was thrown away.
+- **The port is a preference, not a promise.** 7240 by default so a tab can be
+  bookmarked, falling back to a free one on EADDRINUSE and reporting which.
+  `startPageServer` only falls back when asked, because a verb that named a
+  port and silently got another one would be hiding something.
+- **`/favicon.ico` answers 204, in serve mode only.** A real tab asks for an
+  icon whether or not the page declares one, and the bundle ships none, so
+  without the route every serve session logs a 404 that layering rule 8 counts
+  as a failed request. It is mounted beside the API rather than everywhere,
+  because a headless verb's tab never asks; it defers to a real
+  `dist/page/favicon.ico` if one ever lands there, so the 204 cannot quietly
+  shadow an icon someone added.
 
 ### Exit codes
 
@@ -249,7 +305,7 @@ The full list is in the design docs. The ones that bite:
    repo that installs the tool.
 2. **`src/page/` never touches the filesystem or the network.** It takes
    strings and returns strings through the bridge. Serve mode's two fetches to
-   `/api/document` are the one exception, and they arrive in phase 4.
+   `/api/document` are the one exception, and they are the whole of it.
 3. **`src/cli/index.ts` is the only module that prints.** Everything under
    `src/lib/` returns data. That is why `--json` and the human summary come
    from one call.
@@ -553,6 +609,60 @@ Collected as they are found, so they are not rediscovered.
   `props.h`. `respaceRanks` in the mermaid importer exists entirely because of
   this: the parser sizes boxes by counting characters, and the real heights
   only exist after the shapes do.
+- **`store.listen` is flushed on the next frame, not with the change.** The
+  store's history reactor schedules with `throttleToNextFrame`, so a listener
+  hears about a mutation a frame after it happened. Any code that clears a
+  flag "right after" a write it made itself is wrong: the listener has not run
+  yet, and it sets the flag straight back. The mirror's dirty flag was written
+  that way first and reported every reload as an unsaved local edit.
+- **`store.history.get()` is the change counter the flush cannot lie about.**
+  It is a public atom, read synchronously, and only a real mutation moves it.
+  That is what makes a clean-or-dirty answer possible at all: a save reads the
+  counter before serialising, and after the PUT it clears the flag only if the
+  counter has not moved, so an edit made while the write was in flight is
+  still reported unsaved. The listener refuses to set the flag when the
+  counter equals the saved one, which is how the tail of a drag, flushed a
+  frame after the save that already wrote it, stops re-dirtying the tab. A
+  first attempt cleared the flag at serialisation time instead and made every
+  drag-then-save read as unsaved for ever, which `test/e2e/mirror.test.ts`
+  catches.
+- **A poll compares the bytes, not the mtime.** The GET carries the whole
+  document every second, so comparing it with what the tab last saw costs a
+  string compare and cannot miss a write two coarse-clock ticks apart. The
+  mtime is still read and reported; it is no longer the trigger. The poll also
+  captures a save counter before its request and drops the answer if it moved,
+  because a GET issued before a PUT can land after it and would otherwise
+  reload the pre-save document over the edit just written.
+- **`loadSnapshot` writes as `source: 'user'` unless you say otherwise.** It
+  is an ordinary store write, so a listener filtered to `source: 'user'`
+  cannot tell a load from a human. `editor.store.mergeRemoteChanges(() =>
+  loadSnapshot(...))` tags the whole load `remote`, which is what mirror mode
+  uses to keep a poll's reload out of its own dirty flag. The nesting is safe:
+  `mergeRemoteChanges` refuses to start *inside* an atomic op, but
+  `loadSnapshot`'s own `store.atomic` nested inside it is fine.
+- **`user` is a document-scoped record, and the full UI creates one on
+  mount.** `{ source: 'user', scope: 'document' }` therefore fires once on
+  every mirror tab before anybody touches anything, with a `user:...` record
+  carrying a name and a cursor colour. `comment` is document-scoped too.
+  Filter on `typeName` (`shape`, `binding`, `page`, `asset`, `document`) when
+  what you mean is "the drawing changed", because scope alone does not mean
+  it.
+- **`serializeTldrawJson` writes `editor.store.allRecords()`, every scope.** A
+  `.tldr` this tool writes carries `camera`, `instance`, `instance_page_state`
+  and `pointer` records alongside the shapes, from the CLI and from the mirror
+  alike. Harmless, because `load` reads back through
+  `getStoreSnapshot("document")` and drops them, but it is why a saved file
+  has record types the document scope has never heard of.
+- **A snapshot with a `session` key moves the camera.** `loadSnapshot(store,
+  { document })` keeps the viewer's camera, selection and current page;
+  adding `session` replaces all three with whoever wrote the file. Mirror mode
+  passes `document` alone for exactly that reason, and calls `zoomToFit()`
+  once, on the first load only.
+- **tldraw's own UI does not bind Cmd+S.** The `save-file-copy` action lives
+  in the tldraw.com app, not in the library, so mirror mode's handler has
+  nothing to fight. It still listens on `window` in the capture phase and
+  calls `preventDefault`, because the browser's own "save this page" dialog is
+  the thing that would otherwise open.
 
 ## Where the design lives
 

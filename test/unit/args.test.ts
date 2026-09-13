@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULTS, EXIT, parseCommand } from "../../src/cli/args.js";
+import { DEFAULTS, EXIT, PLANNED_COMMANDS, parseCommand } from "../../src/cli/args.js";
 
 /** No environment defaults unless a test asks for them. */
 const NO_ENV: NodeJS.ProcessEnv = {};
@@ -49,10 +49,39 @@ describe("dispatch", () => {
     expect(!result.ok && result.error).toContain('unknown command "draw"');
   });
 
-  it("names the phase for a command that is specified but not built", () => {
+  it("has a place to name a command that is specified but not built", () => {
+    // Nothing is planned-but-unbuilt since phase 4 shipped `serve`, so this
+    // asserts the mechanism rather than a particular verb: the moment a name
+    // goes back into PLANNED_COMMANDS, a caller should hear which phase brings
+    // it instead of "unknown command".
+    expect(Object.keys(PLANNED_COMMANDS)).toEqual([]);
+  });
+
+  it("takes serve with a file, a port and --no-open", () => {
+    const result = parse(["serve", "a.tldr", "--port", "7300", "--no-open"]);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.parsed.options.port).toBe(7300);
+    expect(result.ok && result.parsed.options.open).toBe(false);
+  });
+
+  it("defaults serve to opening a browser on the default port", () => {
     const result = parse(["serve", "a.tldr"]);
+    expect(result.ok && result.parsed.options.port).toBeUndefined();
+    expect(result.ok && result.parsed.options.open).toBe(true);
+  });
+
+  it("refuses a port that is not a whole number in range", () => {
+    for (const raw of ["-1", "70000", "8.5", "eighty"]) {
+      const result = parse(["serve", "a.tldr", "--port", raw]);
+      expect(result.ok, raw).toBe(false);
+      expect(!result.ok && result.error).toContain("--port");
+    }
+  });
+
+  it("keeps --port off every other command", () => {
+    const result = parse(["run", "a.tldr", "--eval", "1", "--port", "7240"]);
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.error).toContain("phase 4");
+    expect(!result.ok && result.error).toContain('--port is not an option of "run"');
   });
 
   it("dispatches every phase 2 verb", () => {
@@ -184,6 +213,7 @@ describe("command options", () => {
       png: undefined,
       source: undefined,
       append: false,
+      open: true,
     });
   });
 

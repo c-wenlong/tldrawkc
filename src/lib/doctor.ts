@@ -39,6 +39,13 @@ export interface DoctorReport {
 export interface DoctorOptions {
   /** The `--chromium` flag, passed straight through to the resolver. */
   chromium?: string | undefined;
+  /**
+   * The `--headed` flag: show the window while the page-load check runs.
+   *
+   * The check that most often needs watching is this one, because "the page
+   * did not come up" is the failure with the least to read afterwards.
+   */
+  headed?: boolean | undefined;
   /** Where the write-access check writes. Defaults to the process cwd. */
   cwd?: string | undefined;
 }
@@ -54,7 +61,7 @@ export async function doctor(options: DoctorOptions = {}): Promise<DoctorReport>
   // message would only bury the first.
   const canOpen = bundle.status !== "fail" && chromium.status !== "fail";
   const page = canOpen
-    ? await checkPageLoad(options.chromium)
+    ? await checkPageLoad(options.chromium, options.headed)
     : unavailable(
         bundle.status === "fail" ? "the page bundle is missing" : "no Chromium is available",
       );
@@ -181,9 +188,12 @@ function unavailable(reason: string): PageChecks {
  * rendered check, screenshotting a one-box fixture and confirming the label is
  * Shantell Sans, is the stronger test and belongs with the page.
  */
-async function checkPageLoad(chromium: string | undefined): Promise<PageChecks> {
+async function checkPageLoad(
+  chromium: string | undefined,
+  headed: boolean | undefined,
+): Promise<PageChecks> {
   try {
-    return await withCanvas({ chromium }, async (canvas) => {
+    return await withCanvas({ chromium, headed }, async (canvas) => {
       // Before anything is read off the network log: `ping` answering means
       // the editor mounted, and tldraw's font fetches are still in flight at
       // that point. Snapshotting here would let a 404 land after the check had
