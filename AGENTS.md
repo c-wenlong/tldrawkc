@@ -624,7 +624,19 @@ Collected as they are found, so they are not rediscovered.
   band is the label rectangle less `LABEL_PADDING`, because those rows are
   whitespace and a corner eating into them is not visible. Demanding the padding
   against a slanted edge as well was measured too strict, on `signal` in a
-  triangle 220 by 150, which sits plainly inside its outline.
+  triangle 220 by 150, which sits plainly inside its outline. The run is then
+  taken centred on the ink rather than as a plain width, since `align: 'start'`
+  and `align: 'end'` move a label off the middle of the bounding box and a
+  width alone cannot see that: `a short note` in a diamond 260 by 150 sits well
+  clear at `middle` and crosses the left edge at `start`, with the same ink
+  either way.
+- **`measureTextSpans` positions its spans against an element one label padding
+  inside the shape, whatever the alignment is.** It is handed the shape's width
+  and `LABEL_PADDING`, so its element is `w - 32` wide and carries the shape's
+  own `text-align`. tldraw's real label rectangle is narrower than that and
+  moves with the alignment, but the two start and end in the same place at
+  `start` and at `end` alike, so a span's `x` can be read as `LABEL_PADDING + x`
+  in shape space with no case per alignment.
 - **The label metrics are `@internal`.** `LABEL_FONT_SIZES`,
   `ARROW_LABEL_FONT_SIZES`, `LABEL_PADDING`, `ARROW_LABEL_PADDING` and
   `TEXT_PROPS` live in

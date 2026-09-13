@@ -220,8 +220,20 @@ function labelWidthOf(editor: Editor, shape: TLShape, boundsWidth: number): numb
  * an SVG export. Grouping those by their top edge gives the real lines, and the
  * widest of them is what a reader sees reaching furthest across the shape.
  * Whitespace spans are dropped, because a trailing space is not ink.
+ *
+ * The centre comes back with the width, because `align: 'start'` and
+ * `align: 'end'` push a label to one side of the bounding box and a width alone
+ * cannot see that. Spans are positioned against the measurement element's own
+ * left edge, which sits one label padding inside the shape whichever alignment
+ * is in play: the element is the shape's width less both paddings and carries
+ * the shape's `text-align`, so it starts and ends exactly where tldraw's own
+ * narrower label rectangle does.
  */
-function labelInkWidthOf(editor: Editor, shape: TLShape, boundsWidth: number): number | undefined {
+function labelInkOf(
+  editor: Editor,
+  shape: TLShape,
+  boundsWidth: number,
+): { width: number; centre: number } | undefined {
   const text = plainTextOf(editor, shape);
   if (text.trim().length === 0) return undefined;
   const size = propOf<TLDefaultSizeStyle>(shape, "size");
@@ -255,14 +267,20 @@ function labelInkWidthOf(editor: Editor, shape: TLShape, boundsWidth: number): n
       lines.set(key, { from: span.box.x, to: span.box.x + span.box.w });
     }
   }
-  let widest = 0;
-  for (const line of lines.values()) widest = Math.max(widest, line.to - line.from);
-  return widest > 0 ? widest : undefined;
+  let widest: { from: number; to: number } | undefined;
+  for (const line of lines.values()) {
+    if (!widest || line.to - line.from > widest.to - widest.from) widest = line;
+  }
+  if (!widest) return undefined;
+  const width = widest.to - widest.from;
+  if (!(width > 0)) return undefined;
+  return { width, centre: LABEL_PADDING + (widest.from + widest.to) / 2 };
 }
 
 /**
- * How much room the outline leaves the label, in the shape's own coordinate
- * space, or `undefined` when it leaves the label all of it.
+ * How much room the outline leaves the label and how much the label wants, in
+ * the shape's own coordinate space, or `undefined` when the outline leaves the
+ * label all of it.
  *
  * `unreadable-label` used to compare against the shape's width, which is the
  * bounding box, and a diamond only ever reaches its bounding box width along
@@ -270,20 +288,27 @@ function labelInkWidthOf(editor: Editor, shape: TLShape, boundsWidth: number): n
  * because `GeoShapeUtil.getGeometry` clamps it to the shape and so can never
  * report a size the shape does not have. So the question is put to the rendered
  * outline instead: take the rows the text occupies and ask how wide the shape
- * is across them.
+ * is across them, around the point the text is actually centred on.
  *
  * The rows are the label rectangle less its own padding, because that padding
  * is whitespace: a diamond's corners eating into it is not something a reader
- * can see, and it is the ink crossing the outline that is the finding. Where
- * the label is aligned is already in the rectangle's position, so `start`,
- * `middle` and `end` need no case of their own.
+ * can see, and it is the ink crossing the outline that is the finding. The
+ * rectangle's own position is what carries `verticalAlign`, so `start`,
+ * `middle` and `end` need no case of their own on that axis.
  *
- * A shape whose outline gives the label its full width answers `undefined`
- * rather than its own width, so the caller does no further work and the rule
- * has nothing extra to check. That is every rectangle, which is exactly the
- * case this must not change.
+ * The chord is measured twice, cheaply first and then around the ink, so that a
+ * shape whose outline gives the label its full width never pays for
+ * {@link labelInkOf}, which is the most expensive measurement in the pass. That
+ * shortcut is safe because a label always sits at least one padding inside the
+ * bounding box, so where the outline is the box no alignment can push it out.
+ * Such a shape answers `undefined`, the rule has nothing extra to check, and
+ * that is every rectangle: the case this must not change.
  */
-function usableWidthOf(editor: Editor, shape: TLShape, boundsWidth: number): number | undefined {
+function outlineFitOf(
+  editor: Editor,
+  shape: TLShape,
+  boundsWidth: number,
+): { usableWidth: number; labelInkWidth: number } | undefined {
   if (shape.type !== "geo") return undefined;
   const geometry = editor.getShapeGeometry(shape);
   if (!isGroup(geometry)) return undefined;
@@ -294,13 +319,17 @@ function usableWidthOf(editor: Editor, shape: TLShape, boundsWidth: number): num
   if (!label || !body?.isClosed) return undefined;
   const outline = body.vertices.map((vertex) => ({ x: vertex.x, y: vertex.y }));
   if (outline.length < 3) return undefined;
-  const chord = usableWidthAtBand(
-    outline,
-    label.bounds.minY + LABEL_PADDING,
-    label.bounds.maxY - LABEL_PADDING,
-  );
-  if (!Number.isFinite(chord) || chord <= 0) return undefined;
-  return chord < boundsWidth ? chord : undefined;
+
+  const top = label.bounds.minY + LABEL_PADDING;
+  const bottom = label.bounds.maxY - LABEL_PADDING;
+  const widest = usableWidthAtBand(outline, top, bottom);
+  if (!Number.isFinite(widest) || widest <= 0 || widest >= boundsWidth) return undefined;
+
+  const ink = labelInkOf(editor, shape, boundsWidth);
+  if (ink === undefined) return undefined;
+  const usable = usableWidthAtBand(outline, top, bottom, ink.centre);
+  if (!Number.isFinite(usable)) return undefined;
+  return { usableWidth: usable, labelInkWidth: ink.width };
 }
 
 /**
@@ -388,17 +417,11 @@ export function collectLintRecords(editor: Editor): {
     else if (Number.isFinite(own)) {
       const width = labelWidthOf(editor, shape, own);
       if (width !== undefined) record.labelWidth = width;
-      // The outline check, and only for a shape whose outline actually pinches:
-      // laying the label out span by span is the most expensive measurement
-      // here, and on a plain box, which is most shapes on most pages, it can
-      // never tell you anything the check above did not.
-      const usable = usableWidthOf(editor, shape, own);
-      if (usable !== undefined) {
-        const ink = labelInkWidthOf(editor, shape, own);
-        if (ink !== undefined) {
-          record.usableWidth = usable;
-          record.labelInkWidth = ink;
-        }
+      // The outline check, which says nothing at all on a plain box.
+      const fit = outlineFitOf(editor, shape, own);
+      if (fit !== undefined) {
+        record.usableWidth = fit.usableWidth;
+        record.labelInkWidth = fit.labelInkWidth;
       }
     }
     return record;

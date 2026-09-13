@@ -38,6 +38,7 @@ import {
   severityOf,
   chordWidthAt,
   usableWidthAtBand,
+  widestRunAt,
   unreadableLabels,
   type LintBinding,
   type LintShape,
@@ -1009,6 +1010,29 @@ describe("unreadable-label against the outline", () => {
     expect(unreadableLabels([ellipse]).map((lint) => lint.rule)).toEqual(["unreadable-label"]);
   });
 
+  it("flags a short label that align: 'start' pushed onto a slanted edge", () => {
+    // Measured on the canvas: `a short note` in a diamond 260 by 150 sits well
+    // inside the outline at `align: 'middle'` and crosses the left edge at
+    // `align: 'start'`. The ink is the same 142 units either way, so the whole
+    // difference is in where the outline has room for it.
+    const centred = geo("shape:mid", { x: 0, y: 0, w: 260, h: 150 }, {
+      geo: "diamond",
+      shapeWidth: 260,
+      labelWidth: 174,
+      usableWidth: 202,
+      labelInkWidth: 142,
+    });
+    const pushed = geo("shape:start", { x: 0, y: 0, w: 260, h: 150 }, {
+      geo: "diamond",
+      shapeWidth: 260,
+      labelWidth: 174,
+      usableWidth: 122,
+      labelInkWidth: 142,
+    });
+    expect(unreadableLabels([centred])).toEqual([]);
+    expect(unreadableLabels([pushed]).map((lint) => lint.shapeIds)).toEqual([["shape:start"]]);
+  });
+
   it("respects lintIgnore", () => {
     expect(unreadableLabels([diamond("dia", { meta: { lintIgnore: ["unreadable-label"] } })])).toEqual(
       [],
@@ -1097,6 +1121,32 @@ describe("the room an outline leaves a label", () => {
 
   it("ignores a repeated closing vertex, which is how tldraw reports an outline", () => {
     expect(chordWidthAt([...square, { x: 0, y: 0 }], 50)).toBe(100);
+  });
+
+  it("hands back where the run is, not only how wide", () => {
+    expect(widestRunAt(rhombus, 15)).toEqual({ from: 25, to: 75 });
+    // Two legs of equal width, so the first one found wins the tie.
+    expect(widestRunAt(forked, 30)).toEqual({ from: 0, to: 20 });
+    expect(widestRunAt(square, -1)).toBeNull();
+  });
+
+  it("shrinks around a label pushed to one side", () => {
+    // `align: 'start'` and `align: 'end'` move a label off the middle of the
+    // bounding box, where a line narrower than the chord can still cross the
+    // edge it was pushed towards. The answer is the widest run centred on the
+    // ink that fits, so a centre 10 units from the run's left end leaves 20.
+    expect(usableWidthAtBand(square, 20, 80, 50)).toBe(100);
+    expect(usableWidthAtBand(square, 20, 80, 10)).toBe(20);
+    expect(usableWidthAtBand(square, 20, 80, 90)).toBe(20);
+    // Outside the shape entirely, there is no room at all rather than a
+    // negative amount of it.
+    expect(usableWidthAtBand(square, 20, 80, -30)).toBe(0);
+  });
+
+  it("keeps the diamond's own arithmetic when the label sits in the middle", () => {
+    expect(usableWidthAtBand(rhombus, 15, 45, 50)).toBe(50);
+    // Pushed left in a diamond, the room collapses much faster than the chord.
+    expect(usableWidthAtBand(rhombus, 15, 45, 30)).toBe(10);
   });
 });
 

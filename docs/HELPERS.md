@@ -435,7 +435,12 @@ along one line through its middle, so a label can wrap politely, break nothing,
 and still run out through both slanted edges. So the rule asks the rendered
 outline instead: it intersects the polygon `getShapeGeometry` reports with the
 rows the text occupies, takes the narrowest horizontal run across them, and
-compares that against the widest line the label actually renders as. A
+compares that against the widest line the label actually renders as. Where the
+ink sits across the shape counts as well as how wide it is, because
+`align: 'start'` and `align: 'end'` push a label to one side of the bounding
+box, and off to one side of a diamond a line narrower than the chord can still
+cross the edge it was pushed towards. So what the run gives back is the widest
+span centred on the ink that fits inside it. A
 rectangle's outline gives the label every unit of its width and reports no
 usable width at all, which is why this check is purely additive and cannot
 change what the rule says about a plain box. `triangle`, `star`, `hexagon`,

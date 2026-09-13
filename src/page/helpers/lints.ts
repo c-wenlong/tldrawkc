@@ -259,18 +259,21 @@ const MAX_BAND_SAMPLES = 64;
 
 /**
  * The widest horizontal run inside `polygon` at height `y`, in the polygon's
- * own coordinate space, or zero when the line misses it.
+ * own coordinate space, or `null` when the line misses it.
  *
  * Every edge that straddles the line contributes a crossing; sorted and taken
  * in pairs those are the spans inside, by the even-odd rule, and the widest of
- * them is the one a centred label sits in. A concave outline can hand back
- * several, which is the whole reason this is not `maxX - minX`.
+ * them is the one a label sits in. A concave outline can hand back several,
+ * which is the whole reason this is not `maxX - minX`.
  *
  * Half-open on purpose (`a.y > y` against `b.y > y`), so a vertex exactly on
  * the line is counted once rather than twice, and an edge lying along the line
  * contributes nothing.
  */
-export function chordWidthAt(polygon: readonly Point[], y: number): number {
+export function widestRunAt(
+  polygon: readonly Point[],
+  y: number,
+): { from: number; to: number } | null {
   const crossings: number[] = [];
   for (let i = 0; i < polygon.length; i++) {
     const a = polygon[i];
@@ -279,16 +282,22 @@ export function chordWidthAt(polygon: readonly Point[], y: number): number {
     if (a.y > y === b.y > y) continue;
     crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
   }
-  if (crossings.length < 2) return 0;
+  if (crossings.length < 2) return null;
   crossings.sort((p, q) => p - q);
-  let widest = 0;
+  let widest: { from: number; to: number } | null = null;
   for (let i = 0; i + 1 < crossings.length; i += 2) {
     const from = crossings[i];
     const to = crossings[i + 1];
     if (from === undefined || to === undefined) continue;
-    widest = Math.max(widest, to - from);
+    if (widest === null || to - from > widest.to - widest.from) widest = { from, to };
   }
   return widest;
+}
+
+/** {@link widestRunAt}, when only the width is wanted. Zero for a miss. */
+export function chordWidthAt(polygon: readonly Point[], y: number): number {
+  const run = widestRunAt(polygon, y);
+  return run === null ? 0 : run.to - run.from;
 }
 
 /**
@@ -302,21 +311,36 @@ export function chordWidthAt(polygon: readonly Point[], y: number): number {
  * `star`, `cloud` and `heart` can pinch in the middle of it; see
  * {@link BAND_SAMPLE_STEP}. A band with no height, which is a shape too small
  * to hold its own label padding, is read as the single row through its centre.
+ *
+ * `centre` is where the label's ink actually sits across the shape, and it
+ * matters because `align: 'start'` and `align: 'end'` push a label to one side
+ * of the bounding box. Off to one side of a diamond, a line narrower than the
+ * chord can still cross the edge it was pushed towards, so what comes back is
+ * the widest run *centred on the ink* that fits: twice the smaller of the two
+ * distances to the run's ends. Leave it out for the label's natural place,
+ * which is the middle of the run.
  */
 export function usableWidthAtBand(
   polygon: readonly Point[],
   top: number,
   bottom: number,
+  centre?: number,
 ): number {
   if (polygon.length < 3) return 0;
   const from = Math.min(top, bottom);
   const to = Math.max(top, bottom);
   const height = to - from;
-  if (!(height > 0)) return chordWidthAt(polygon, from);
+  const roomAt = (y: number): number => {
+    const run = widestRunAt(polygon, y);
+    if (run === null) return 0;
+    if (centre === undefined) return run.to - run.from;
+    return Math.max(0, Math.min(centre - run.from, run.to - centre)) * 2;
+  };
+  if (!(height > 0)) return roomAt(from);
   const steps = Math.min(MAX_BAND_SAMPLES, Math.max(1, Math.ceil(height / BAND_SAMPLE_STEP)));
   let narrowest = Infinity;
   for (let i = 0; i <= steps; i++) {
-    narrowest = Math.min(narrowest, chordWidthAt(polygon, from + (height * i) / steps));
+    narrowest = Math.min(narrowest, roomAt(from + (height * i) / steps));
   }
   return narrowest;
 }
