@@ -927,13 +927,17 @@ export function missingGlyph(
     const missing = missingCharacters(font, text, coverage);
     if (missing.length === 0) continue;
 
+    // Against the whole label, not just what is missing here. A family that
+    // rescues the missing characters but drops one the current font was
+    // drawing fine is not a fix, and swapping between two such families is a
+    // loop. `draw` has a heavy check mark none of the Plex faces do, so this
+    // is reachable rather than theoretical.
     const rescue = FALLBACK_FONTS.find(
-      (candidate) =>
-        candidate !== font && missingCharacters(candidate, missing.join(""), coverage).length === 0,
+      (candidate) => candidate !== font && missingCharacters(candidate, text, coverage).length === 0,
     );
     const advice =
       rescue === undefined
-        ? `no bundled font has ${missing.length === 1 ? "it" : "them"}, so rewrite the label`
+        ? "no bundled font can draw the whole label, so rewrite it"
         : `set font: '${rescue}' on this shape`;
     lints.push({
       rule: "missing-glyph",

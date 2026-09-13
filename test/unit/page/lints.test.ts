@@ -1055,10 +1055,19 @@ describe("missing-glyph", () => {
     // Set membership is absent from all four, which is the one case where
     // switching font is not the fix.
     expect(missingGlyph([labelled("shape:a", "sans", "x ∈ S")])[0]?.message).toContain(
-      "no bundled font has it",
+      "no bundled font can draw the whole label",
     );
-    expect(missingGlyph([labelled("shape:a", "sans", "∈ ∪")])[0]?.message).toContain(
-      "no bundled font has them",
+  });
+
+  it("only suggests a font that can draw the whole label, not just the gap", () => {
+    // `draw` has the heavy check mark U+2714 and none of the three IBM Plex
+    // faces do, so suggesting `sans` for `α ✔` would fix the alpha and break
+    // the tick, and switching back would break the alpha again.
+    expect(missingGlyph([labelled("shape:a", "draw", "α ✔")])[0]?.message).toContain(
+      "no bundled font can draw the whole label",
+    );
+    expect(missingGlyph([labelled("shape:a", "draw", "α ✓")])[0]?.message).toContain(
+      "set font: 'sans'",
     );
   });
 
