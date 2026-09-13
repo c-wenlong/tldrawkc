@@ -45,6 +45,7 @@
     "build:node": "tsc -p tsconfig.json",
     "build:api": "node --input-type=module -e \"import{buildApiReference}from'./dist/lib/api.js';const r=await buildApiReference();console.log('api: '+r.count+' helpers -> '+r.path)\"",
     "build:page": "vite build",
+    "generate:fonts": "npm run build:node && node --input-type=module -e \"import{buildFontCoverage}from'./dist/lib/font-coverage.js';const r=await buildFontCoverage();console.log('fonts: '+r.fonts+' families -> '+r.path)\"",
     "clean": "node --input-type=module -e \"import{rm}from'node:fs/promises';await rm('dist',{recursive:true,force:true})\"",
     "lint": "eslint",
     "typecheck": "tsc -p tsconfig.test.json && tsc -p tsconfig.page.json",

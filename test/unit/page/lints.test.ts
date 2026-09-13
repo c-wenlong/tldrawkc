@@ -27,6 +27,8 @@ import {
   overlappingShapes,
   overlappingText,
   isConvexPolygon,
+  missingCharacters,
+  missingGlyph,
   missingTopic,
   pointInPolygon,
   runLints,
@@ -1002,6 +1004,106 @@ describe("missing-topic", () => {
     const lints = runLints([arrow("shape:loose")], [], { meta: null });
     expect(lints.map((lint) => lint.rule)).toEqual(["friendless-arrow", "missing-topic"]);
     expect(hasBlockingLints(lints)).toBe(true);
+  });
+});
+
+describe("missing-glyph", () => {
+  /** A label-bearing shape, which is all this rule looks at. */
+  const labelled = (id: string, font: string, text: string, extra: Partial<LintShape> = {}): LintShape => ({
+    id,
+    type: "geo",
+    geo: "rectangle",
+    fill: "none",
+    font,
+    text,
+    ...extra,
+  });
+
+  it("fires on a Greek letter in the draw font and names the character", () => {
+    const lints = missingGlyph([labelled("shape:a", "draw", "angle θ")]);
+    expect(lints.map((lint) => lint.rule)).toEqual(["missing-glyph"]);
+    expect(lints[0]?.shapeIds).toEqual(["shape:a"]);
+    expect(lints[0]?.message).toContain("shape:a");
+    expect(lints[0]?.message).toContain("'draw'");
+    expect(lints[0]?.message).toContain("θ");
+  });
+
+  it("suggests a font that can draw what the label needs", () => {
+    expect(missingGlyph([labelled("shape:a", "draw", "θ")])[0]?.message).toContain(
+      "set font: 'sans'",
+    );
+  });
+
+  it("says nothing about the same label in sans", () => {
+    expect(missingGlyph([labelled("shape:a", "sans", "angle θ")])).toEqual([]);
+  });
+
+  it("says nothing about a label that is only ASCII", () => {
+    expect(missingGlyph([labelled("shape:a", "draw", "dot product a . b")])).toEqual([]);
+  });
+
+  it("says nothing about a square root, which every font has", () => {
+    expect(missingGlyph([labelled("shape:a", "draw", "√2")])).toEqual([]);
+  });
+
+  it("names every missing character once, in the order they appear", () => {
+    const lints = missingGlyph([labelled("shape:a", "draw", "λ and θ and λ again")]);
+    expect(lints[0]?.message).toContain("λ θ");
+  });
+
+  it("admits when no bundled font can draw the character", () => {
+    // Set membership is absent from all four, which is the one case where
+    // switching font is not the fix.
+    expect(missingGlyph([labelled("shape:a", "sans", "x ∈ S")])[0]?.message).toContain(
+      "no bundled font can draw the whole label",
+    );
+  });
+
+  it("only suggests a font that can draw the whole label, not just the gap", () => {
+    // `draw` has the heavy check mark U+2714 and none of the three IBM Plex
+    // faces do, so suggesting `sans` for `α ✔` would fix the alpha and break
+    // the tick, and switching back would break the alpha again.
+    expect(missingGlyph([labelled("shape:a", "draw", "α ✔")])[0]?.message).toContain(
+      "no bundled font can draw the whole label",
+    );
+    expect(missingGlyph([labelled("shape:a", "draw", "α ✓")])[0]?.message).toContain(
+      "set font: 'sans'",
+    );
+  });
+
+  it("is muted by meta.lintIgnore", () => {
+    expect(
+      missingGlyph([labelled("shape:a", "draw", "θ", { meta: { lintIgnore: ["missing-glyph"] } })]),
+    ).toEqual([]);
+    expect(
+      missingGlyph([labelled("shape:a", "draw", "θ", { meta: { lintIgnore: true } })]),
+    ).toEqual([]);
+  });
+
+  it("ignores a shape with no font and a shape with no text", () => {
+    expect(missingGlyph([{ id: "shape:a", type: "geo", text: "θ" }])).toEqual([]);
+    expect(missingGlyph([labelled("shape:a", "draw", "")])).toEqual([]);
+  });
+
+  it("says nothing about a font it has never heard of", () => {
+    expect(missingGlyph([labelled("shape:a", "comic", "θ")])).toEqual([]);
+  });
+
+  it("skips control characters, which no font has to draw", () => {
+    expect(missingCharacters("draw", "a\nb\tc")).toEqual([]);
+  });
+
+  it("takes a coverage table, so the rule is pure over its inputs", () => {
+    const table = { tiny: [[0x61, 0x63]] as const };
+    expect(missingCharacters("tiny", "abcd", table)).toEqual(["d"]);
+    expect(missingGlyph([labelled("shape:a", "tiny", "abc")], table)).toEqual([]);
+  });
+
+  it("is a warning, so it never turns into exit code 3 on its own", () => {
+    const lints = runLints([labelled("shape:a", "draw", "θ")], []);
+    expect(lints.map((lint) => lint.rule)).toEqual(["missing-glyph"]);
+    expect(lints.every((lint) => severityOf(lint) === "warn")).toBe(true);
+    expect(hasBlockingLints(lints)).toBe(false);
   });
 });
 

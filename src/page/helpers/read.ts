@@ -273,6 +273,10 @@ export function collectLintRecords(editor: Editor): {
     if (label) record.labelBounds = label;
     const geo = propOf<string>(shape, "geo");
     if (geo !== undefined) record.geo = geo;
+    // For `missing-glyph`, which asks whether this family has the characters
+    // the label is made of. Every label-bearing shape carries it.
+    const font = propOf<string>(shape, "font");
+    if (font !== undefined) record.font = font;
     const fill = propOf<string>(shape, "fill");
     if (fill !== undefined) record.fill = fill;
     // The shape's own width, unrotated, which is the room its label has.
@@ -312,7 +316,8 @@ export function documentMeta(editor: Editor): DiagramMeta | null {
  * Run the whole lint pass over the current page and the document.
  *
  * The document is passed in every time, which is what lets `missing-topic`
- * fire. It is a warning, so it never changes an exit code on its own.
+ * fire. Both it and `missing-glyph` are warnings, so neither changes an exit
+ * code on its own.
  */
 export function lintPage(editor: Editor): Lint[] {
   const { shapes, bindings } = collectLintRecords(editor);

@@ -162,6 +162,10 @@ does not already contain.
 - Before and after, or step by step, beats a static tangle for a process.
 - The words on a card are that card's label, not a separate text shape.
 - Keep boxes at 160 by 60 or larger at the default font.
+- Maths in the default `draw` font gets a `missing-glyph` warning: Shantell
+  Sans has no Greek past pi and no set-theory signs. Set `font: 'sans'` on that
+  label, and write `∈`, `∪`, `∩`, `∀` and `∃` out in words, since no bundled
+  font can draw them.
 
 ## Snippet conventions
 
