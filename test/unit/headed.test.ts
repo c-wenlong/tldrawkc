@@ -11,12 +11,41 @@
  * `withCanvas`, which is the one place `headless: !options.headed` is read. No
  * Chromium is launched and no page is served: what is under test is the
  * plumbing, not the browser.
+ *
+ * Both of the environment's answers are stood in for, and both have to be.
+ * `doctor` is the one verb that decides for itself whether to open a browser
+ * at all: it skips the page-load check when Chromium is missing **or** when
+ * `dist/page` has not been built. A unit suite runs before the build in CI, so
+ * without a stand-in bundle `doctor` would never reach `withCanvas` there and
+ * this file would pass on a laptop and fail on a runner, which is how it first
+ * went red.
  */
 
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, afterAll, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
+import type * as PathsModule from "../../src/lib/paths.js";
+
+/**
+ * A `dist/page` that exists, wherever this runs.
+ *
+ * Built inside the mock factory because `vi.mock` is hoisted above every
+ * import, so nothing declared at module scope is initialised yet when it runs.
+ * The directory is a real one with a real `index.html`, which is all
+ * `checkPageBundle` looks at.
+ */
+vi.mock("../../src/lib/paths.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof PathsModule>();
+  const nodeFs = await import("node:fs");
+  const nodeOs = await import("node:os");
+  const nodePath = await import("node:path");
+  const dist = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "tldrawkc-headed-page-"));
+  const index = nodePath.join(dist, "index.html");
+  nodeFs.writeFileSync(index, "<!doctype html><title>stand-in</title>");
+  return { ...actual, PAGE_DIST_DIR: dist, PAGE_INDEX_HTML: index };
+});
 
 import type * as BrowserModule from "../../src/lib/browser.js";
 import type { Bounds, CanvasHandle, WithCanvasOptions } from "../../src/lib/browser.js";
@@ -49,6 +78,16 @@ const { exportCanvas, fromMermaid, inspect, newDocument, run, shot } = await imp
   "../../src/lib/canvas.js"
 );
 const { doctor } = await import("../../src/lib/doctor.js");
+const { PAGE_DIST_DIR: STAND_IN_PAGE_DIR } = await import("../../src/lib/paths.js");
+
+// Tidy up the stand-in bundle, and only ever that one: if the mock above ever
+// stopped applying, this path would be the repo's real `dist/page` and the
+// guard is what stops the suite deleting the build.
+afterAll(async () => {
+  if (STAND_IN_PAGE_DIR.startsWith(os.tmpdir())) {
+    await fs.rm(STAND_IN_PAGE_DIR, { recursive: true, force: true });
+  }
+});
 
 /** A 1x1 transparent PNG, so `writePng` has real bytes to write. */
 const TINY_PNG =
