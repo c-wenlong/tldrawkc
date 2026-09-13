@@ -9,9 +9,10 @@ This file is the operating manual. [README.md](README.md) says what the tool
 is for; the design docs it is built from live in the self-learn repo (see
 "Where the design lives" below).
 
-**Status: phase 3.** `new`, `run`, `shot`, `inspect`, `export`, `from-mermaid`,
-`list`, `meta set`, `api` and `doctor` work. `serve` is specified and not
-written yet; `tldrawkc help` lists which phase brings it.
+**Status: phase 4.** Every verb in CLI.md is built: `new`, `run`, `shot`,
+`inspect`, `export`, `from-mermaid`, `list`, `meta set`, `serve`, `api` and
+`doctor`. `PLANNED_COMMANDS` in `src/cli/args.ts` is empty and stays as the
+place to name the next specified-but-unbuilt verb.
 
 ## What lives where
 
@@ -23,7 +24,8 @@ written yet; `tldrawkc help` lists which phase brings it.
 | `src/lib/paths.ts` | every path the tool computes. Nothing else builds one |
 | `src/lib/files.ts` | every file write, all atomic (temp sibling, then rename) |
 | `src/lib/browser.ts` | resolving Chromium, opening the page, the typed wrapper over every bridge call, and `withCanvas` |
-| `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port |
+| `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port, plus the three `/api/*` routes serve mode mounts over one `.tldr` |
+| `src/lib/serve.ts` | `serve`: start that server on a fixed port, open the machine's own browser, hand back a handle the caller closes |
 | `src/lib/canvas.ts` | one function per verb that needs a browser: `run`, `shot`, `newDocument`, `inspect`, `exportCanvas`, `fromMermaid`. Takes data, returns data |
 | `src/lib/fonts.ts` | the SVG font subsetter: which characters a document draws, and the `@font-face` surgery. Pure apart from the one call into harfbuzz |
 | `src/lib/meta.ts` | the document metadata: the shape, the `.tldr` JSON surgery, `meta set`, and the SVG stamp. No browser |
@@ -92,6 +94,14 @@ A browser the caller **named** is not a suggestion: when `--chromium` or
 a reason to fall through to a different browser. The whole point of naming one
 is to control which engine drew the picture. Only steps 3 and 4 fall through.
 
+`--headed` shows the window, and it reaches `withCanvas` from every verb that
+opens one: `run`, `shot`, `new`, `inspect`, `export`, `from-mermaid` and
+`doctor`. It is a flag that fails silently when a verb drops it, since nothing
+errors and a window simply never appears, so `test/unit/headed.test.ts` records
+the options each verb passes and asserts the list of verbs as well. A headed
+Chromium needs a display: macOS always has one, a Linux runner needs
+`xvfb-run`, and `test/e2e/headed.test.ts` skips without either.
+
 `playwright` is a devDependency pinned to the **exact same version** as
 `playwright-core`. It has no install script of its own (checked against
 1.63.0: the published `package.json` has no `scripts` block at all), so it
@@ -102,11 +112,14 @@ Bump the two together or not at all.
 
 ## Verbs
 
-Two of them are not in `canvas.ts` at all. `list` and `meta set` never open a
+Three of them are not in `canvas.ts` at all. `list` and `meta set` never open a
 browser: one walks a directory and parses JSON, the other rewrites one record
 in a `.tldr`. Putting them through `withCanvas` would buy nothing and cost a
-Chromium launch per call, and a catalog runs `list` on every index. Add a verb
-to `canvas.ts` when it needs a live editor, and beside it when it does not.
+Chromium launch per call, and a catalog runs `list` on every index. `serve` is
+the third, for the opposite reason: it wants the human's own browser rather
+than a headless one this process owns, so it lives in `src/lib/serve.ts` and
+never calls `withCanvas`. Add a verb to `canvas.ts` when it needs a live
+editor, and beside it when it does not.
 
 Every other verb is one function in `src/lib/canvas.ts` that takes an options
 object and returns a result object. None of them print, none of them exit, and none
@@ -151,6 +164,36 @@ available here. It also embeds the flowchart into the snippet as JSON and
 parses it back at runtime rather than concatenating it into the program text: a
 diagram is arbitrary text, and one quote in a node label would otherwise end
 the literal and let the rest of the file run as code.
+
+### serve
+
+The one long-lived command, and the only place two of the rules bend.
+
+- **It keeps a server and a browser alive on purpose.** Layering rule 6 says a
+  command never leaves a browser running, and `serve` is the named exception in
+  the design docs: it runs until SIGINT. The CLI owns that wait, in
+  `untilSignal()`, and closes the server before returning 0. Nothing in
+  `src/lib/serve.ts` waits or prints.
+- **The browser is not Chromium.** `serve` spawns the platform's own opener
+  (`open`, `xdg-open`, `cmd /c start`), detached, with every failure ignored:
+  the URL is already on stdout, so a box with no opener should still serve the
+  page. `--no-open` skips it. Do not reach for `withCanvas` here, and do not add
+  a dependency to open a URL.
+- **The `/api/*` routes exist only in serve mode.** `startServeServer` mounts
+  them; `startPageServer`, which every headless verb uses, does not. That is
+  layering rule 2 enforced by the server rather than promised by the page: a
+  snippet runs with the page's full power, so an `/api/document` that were
+  always mounted would be a write to any file behind one `fetch`.
+  `test/unit/serve.test.ts` asserts a headless server 404s it.
+- **A PUT is checked before anything touches disk.** Over 50 MB is 413, not
+  JSON or no `tldrawFileFormatVersion` is 400, and the write itself goes
+  through `files.ts` like every other one. An oversized body is drained and the
+  connection closed, never destroyed: destroying the request destroys the
+  response with it, and the client waits for a 413 that was thrown away.
+- **The port is a preference, not a promise.** 7240 by default so a tab can be
+  bookmarked, falling back to a free one on EADDRINUSE and reporting which.
+  `startPageServer` only falls back when asked, because a verb that named a
+  port and silently got another one would be hiding something.
 
 ### Exit codes
 
