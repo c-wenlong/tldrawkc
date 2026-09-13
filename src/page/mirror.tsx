@@ -6,8 +6,8 @@
  * (`main.tsx` branches on the query). The difference is the whole tldraw UI
  * instead of `hideUi`, and the two fetches to `/api/document` that layering
  * rule 2 names as its only exception: a `GET` every {@link MIRROR_POLL_MS}
- * that reloads the document when the file's mtime moved, and a `PUT` on
- * Cmd+S that writes the human's edits back. The bridge is installed here too,
+ * that reloads the document when the bytes on disk differ from the ones this
+ * tab last saw, and a `PUT` on Cmd+S that writes the human's edits back. The bridge is installed here too,
  * so an `inspect`-style check against a served tab still works, but the
  * mirror never calls `save()`: the only writes leave through the PUT.
  *
@@ -96,6 +96,37 @@ interface Runtime {
   dirty: boolean;
   lastSaveAt: string | null;
   saving: boolean;
+  /**
+   * The document as the file last held it, as far as this tab knows.
+   *
+   * What the poll compares against, instead of the mtime alone. An mtime is
+   * the filesystem's opinion of when, at whatever resolution it keeps, and two
+   * writes inside one tick of a coarse clock share a timestamp: the second one
+   * would then never reach the canvas. The bytes are already in hand on every
+   * poll, so comparing them costs a string compare and cannot miss a write.
+   */
+  text: string | null;
+  /**
+   * How many saves this tab has completed.
+   *
+   * A poll captures it before its request and discards the answer if it moved,
+   * because a GET issued before a PUT can land after it and would otherwise
+   * reload the pre-save document over the edit that was just written.
+   */
+  saveSeq: number;
+  /**
+   * `store.history`, tldraw's own change counter, as of the document this tab
+   * last wrote or loaded.
+   *
+   * The dirty flag cannot be driven by the change listener alone. Listeners
+   * are flushed a frame late, so the last batch of a drag arrives *after* the
+   * save that already serialised it, and a flag cleared at save time is set
+   * straight back by a notification about work that is safely on disk. The
+   * counter is read synchronously and only a real mutation moves it, so
+   * "nothing has changed since the bytes we wrote" is a number comparison the
+   * flush cannot lie about.
+   */
+  savedEpoch: number | null;
 }
 
 /**
@@ -318,6 +349,9 @@ export function Mirror(props: {
     dirty: false,
     lastSaveAt: null,
     saving: false,
+    text: null,
+    saveSeq: 0,
+    savedEpoch: null,
   });
 
   const onMount = useCallback((mounted: Editor) => {
@@ -338,6 +372,10 @@ export function Mirror(props: {
     return editor.store.listen(
       (entry) => {
         if (!isDrawingEdit(entry.changes)) return;
+        // A notification about changes that are already in the file: the
+        // store has not moved since the save serialised it, so this is the
+        // tail of an edit that was written, not a new one.
+        if (editor.store.history.get() === runtime.current.savedEpoch) return;
         runtime.current.dirty = true;
         setDirty(true);
       },
@@ -365,19 +403,31 @@ export function Mirror(props: {
         schedule();
         return;
       }
+      const seq = runtime.current.saveSeq;
       try {
         const document = await fetchDocument();
         if (stopped) return;
+        // A save started or finished while this request was in the air, so
+        // what came back is the file as it was before that write. Applying it
+        // would roll the canvas back to the document the person just replaced.
+        if (runtime.current.saving || runtime.current.saveSeq !== seq) {
+          schedule();
+          return;
+        }
         setFile(document.file);
-        const first = runtime.current.mtimeMs === null;
-        if (first || document.mtimeMs !== runtime.current.mtimeMs) {
+        const first = runtime.current.text === null;
+        if (first || document.tldr !== runtime.current.text) {
           applyDocument(editor, document.tldr);
           runtime.current.mtimeMs = document.mtimeMs;
+          runtime.current.text = document.tldr;
+          runtime.current.savedEpoch = editor.store.history.get();
           if (!first && runtime.current.dirty) setBanner(true);
           runtime.current.dirty = false;
           setDirty(false);
           // First load only. After that the camera is the human's.
           if (first) editor.zoomToFit();
+        } else {
+          runtime.current.mtimeMs = document.mtimeMs;
         }
         setStatus({ kind: "watching" });
       } catch (cause) {
@@ -408,23 +458,35 @@ export function Mirror(props: {
       runtime.current.saving = true;
       setStatus({ kind: "saving" });
       try {
+        // Read before serialising, so a mutation that slips between the two is
+        // counted as unsaved rather than assumed written.
+        const epoch = editor.store.history.get();
         const tldr = await serializeTldrawJson(editor);
         const result = await putDocument(tldr);
-        // Remember the mtime the server reports, so the next poll does not
-        // read our own write back as a foreign change and reload over it.
+        // Remember what the file now holds, so the next poll does not read our
+        // own write back as a foreign change and reload over it.
         runtime.current.mtimeMs = result.mtimeMs;
-        runtime.current.dirty = false;
-        setDirty(false);
+        runtime.current.text = tldr;
+        runtime.current.saveSeq += 1;
+        runtime.current.savedEpoch = epoch;
+        // Only if the store is still where it was when those bytes were taken.
+        // Someone who kept drawing while the PUT was in flight has edits this
+        // write does not contain, and calling the tab clean would let the next
+        // foreign reload take them without the banner.
+        if (editor.store.history.get() === epoch) {
+          runtime.current.dirty = false;
+          setDirty(false);
+        }
         setSaveError(null);
         const at = clockTime(new Date());
         runtime.current.lastSaveAt = at;
         setLastSaveAt(at);
         setStatus({ kind: "watching" });
       } catch (cause) {
-        // The dirty flag stays set: the edits are still only in this tab. The
-        // message is sticky, because the poll would overwrite the status line
-        // a second later and the person needs to know the file was not
-        // written.
+        // The dirty flag stays set: nothing cleared it, because nothing was
+        // written. The message is sticky, because the poll would overwrite the
+        // status line a second later and the person needs to know the file was
+        // not written.
         setSaveError(
           cause instanceof TypeError
             ? "server unreachable"

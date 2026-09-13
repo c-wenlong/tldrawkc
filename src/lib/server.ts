@@ -188,7 +188,9 @@ export async function startPageServer(options: StartPageServerOptions): Promise<
   const api = options.api;
 
   const server = http.createServer((request, response) => {
-    void handle(root, api, request, response);
+    handle(root, api, request, response).catch((error: unknown) => {
+      failRequest(response, error);
+    });
   });
 
   let fellBackFrom: number | null = null;
@@ -517,6 +519,32 @@ function readBody(request: http.IncomingMessage, limit: number): Promise<BodyRes
     });
     request.on("error", reject);
   });
+}
+
+/**
+ * The last line of defence for a request handler that rejected.
+ *
+ * Every route already answers its own expected failures, so reaching here
+ * means something nobody predicted: a `.tldr` path that is a directory, a read
+ * that fails with EACCES, a stat that races a delete. Node's default for an
+ * unhandled rejection is to kill the process, and `serve` is the one command
+ * meant to sit open for hours, so the whole session would end because one
+ * request went wrong.
+ *
+ * A 500 when nothing has been written yet, and a destroyed socket when a
+ * response is already on the wire and cannot be taken back.
+ */
+function failRequest(response: http.ServerResponse, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  if (response.headersSent || response.writableEnded) {
+    response.destroy();
+    return;
+  }
+  try {
+    endJson(response, 500, { error: message });
+  } catch {
+    response.destroy();
+  }
 }
 
 /** One JSON response. Every `/api/*` answer, success or failure, is one. */

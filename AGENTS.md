@@ -565,6 +565,24 @@ Collected as they are found, so they are not rediscovered.
   flag "right after" a write it made itself is wrong: the listener has not run
   yet, and it sets the flag straight back. The mirror's dirty flag was written
   that way first and reported every reload as an unsaved local edit.
+- **`store.history.get()` is the change counter the flush cannot lie about.**
+  It is a public atom, read synchronously, and only a real mutation moves it.
+  That is what makes a clean-or-dirty answer possible at all: a save reads the
+  counter before serialising, and after the PUT it clears the flag only if the
+  counter has not moved, so an edit made while the write was in flight is
+  still reported unsaved. The listener refuses to set the flag when the
+  counter equals the saved one, which is how the tail of a drag, flushed a
+  frame after the save that already wrote it, stops re-dirtying the tab. A
+  first attempt cleared the flag at serialisation time instead and made every
+  drag-then-save read as unsaved for ever, which `test/e2e/mirror.test.ts`
+  catches.
+- **A poll compares the bytes, not the mtime.** The GET carries the whole
+  document every second, so comparing it with what the tab last saw costs a
+  string compare and cannot miss a write two coarse-clock ticks apart. The
+  mtime is still read and reported; it is no longer the trigger. The poll also
+  captures a save counter before its request and drops the answer if it moved,
+  because a GET issued before a PUT can land after it and would otherwise
+  reload the pre-save document over the edit just written.
 - **`loadSnapshot` writes as `source: 'user'` unless you say otherwise.** It
   is an ordinary store write, so a listener filtered to `source: 'user'`
   cannot tell a load from a human. `editor.store.mergeRemoteChanges(() =>

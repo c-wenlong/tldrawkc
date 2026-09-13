@@ -29,7 +29,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
-import { chromium, type Browser } from "playwright-core";
+import { chromium, type Browser, type Page } from "playwright-core";
 
 import { CLI_ENTRY, PAGE_DIST_DIR, PAGE_INDEX_HTML } from "../../src/lib/paths.js";
 import { resolveChromium } from "../../src/lib/browser.js";
@@ -155,6 +155,52 @@ async function startServe(): Promise<{ child: ChildProcess; url: string }> {
   return { child, url };
 }
 
+/** `inspect --json` from a separate process, which is the point of running it. */
+async function inspectFile(): Promise<{ shapes: { id: string; x: number }[] }> {
+  const result = await cli(["inspect", file, "--json"], dir);
+  return JSON.parse(result.stdout) as { shapes: { id: string; x: number }[] };
+}
+
+function shapeX(report: { shapes: { id: string; x: number }[] }, id: string): number {
+  const shape = report.shapes.find((entry) => entry.id === id);
+  if (!shape) throw new Error(`${id} is not in the document`);
+  return shape.x;
+}
+
+/** Serve the file, open it in a fresh browser, and wait for the mirror global. */
+async function openMirror(): Promise<Page> {
+  const served = await startServe();
+  const browser = await chromium.launch({ executablePath: chromiumPath, headless: true });
+  browsers.push(browser);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  await page.goto(served.url, { waitUntil: "load" });
+  await page.waitForFunction(
+    "Boolean(window.__tldrawkcMirror && typeof window.__tldrawkcMirror.shapeCount === 'function')",
+    undefined,
+    { timeout: 20_000 },
+  );
+  return page;
+}
+
+/**
+ * Drag a shape with the mouse, from its own element's centre.
+ *
+ * The element rather than a computed point, so the press lands on the shape
+ * whatever the camera did with it, and in steps, because tldraw starts a
+ * translation from pointer movement and a single jump can be read as a click.
+ */
+async function dragShape(page: Page, id: string, dx: number, dy: number): Promise<void> {
+  const box = await page.locator(`[data-shape-id="${id}"]`).boundingBox();
+  if (!box) throw new Error(`${id} has no box on screen`);
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx / 2, y + dy / 2, { steps: 8 });
+  await page.mouse.move(x + dx, y + dy, { steps: 8 });
+  await page.mouse.up();
+}
+
 describe("the mirror page", () => {
   it.skipIf(!MIRROR_IS_BUILT)(
     "picks up a shape a run in another process drew",
@@ -190,4 +236,81 @@ describe("the mirror page", () => {
     60_000,
   );
 
+  it.skipIf(!MIRROR_IS_BUILT)(
+    "writes a dragged shape back to the file on Ctrl+S",
+    async () => {
+      // The ROADMAP's "done when" for phase 4, as a test: drag a box in the
+      // served tab, save, and the next `inspect` shows the new position.
+      const drawn = await cli(
+        ["run", file, "--eval", "helpers.box('a','alpha',{x:100,y:100})", "--allow-lints"],
+        dir,
+      );
+      expect(drawn.code, drawn.stderr).toBe(0);
+      const from = shapeX(await inspectFile(), "shape:a");
+
+      const page = await openMirror();
+      await page.waitForFunction("window.__tldrawkcMirror.shapeCount() === 1", undefined, {
+        timeout: NOTICE_MS,
+      });
+
+      await dragShape(page, "shape:a", 140, 90);
+      await page.waitForFunction("window.__tldrawkcMirror.dirty === true", undefined, {
+        timeout: 5_000,
+      });
+
+      // Ctrl rather than Cmd: the handler takes either, and a Linux runner has
+      // no Meta to press.
+      await page.keyboard.press("Control+s");
+      await page.waitForFunction(
+        "window.__tldrawkcMirror.dirty === false && window.__tldrawkcMirror.lastSaveAt !== null",
+        undefined,
+        { timeout: 10_000 },
+      );
+
+      // A separate process, reading the file the tab wrote.
+      expect(shapeX(await inspectFile(), "shape:a")).toBeGreaterThan(from);
+    },
+    60_000,
+  );
+
+  it.skipIf(!MIRROR_IS_BUILT)(
+    "warns when a reload lands on unsaved edits",
+    async () => {
+      const drawn = await cli(
+        ["run", file, "--eval", "helpers.box('a','alpha',{x:100,y:100})", "--allow-lints"],
+        dir,
+      );
+      expect(drawn.code, drawn.stderr).toBe(0);
+
+      const page = await openMirror();
+      await page.waitForFunction("window.__tldrawkcMirror.shapeCount() === 1", undefined, {
+        timeout: NOTICE_MS,
+      });
+
+      await dragShape(page, "shape:a", 120, 80);
+      await page.waitForFunction("window.__tldrawkcMirror.dirty === true", undefined, {
+        timeout: 5_000,
+      });
+
+      // Nothing saved those edits, so the reload the next line causes lands on
+      // top of them. Last write wins is the whole collaboration story, and the
+      // banner is the only thing that says so.
+      const second = await cli(
+        ["run", file, "--eval", "helpers.box('b','beta',{x:400,y:0})", "--allow-lints"],
+        dir,
+      );
+      expect(second.code, second.stderr).toBe(0);
+
+      await page.waitForSelector('[data-testid="mirror-banner"]', { timeout: NOTICE_MS });
+      expect(await page.evaluate<number>("window.__tldrawkcMirror.shapeCount()")).toBe(2);
+      expect(await page.evaluate<boolean>("window.__tldrawkcMirror.dirty")).toBe(false);
+
+      await page.click('[data-testid="mirror-banner-dismiss"]');
+      await page.waitForSelector('[data-testid="mirror-banner"]', {
+        state: "detached",
+        timeout: 5_000,
+      });
+    },
+    60_000,
+  );
 });

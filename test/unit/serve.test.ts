@@ -199,6 +199,27 @@ describe("PUT /api/document", () => {
   });
 });
 
+describe("a handler that rejects", () => {
+  it("answers 500 and leaves the server up", async () => {
+    // A directory where a `.tldr` should be: `modifiedAt` succeeds on it, so
+    // the route gets past its own not-found check and then `readFile` rejects
+    // with EISDIR. Nothing predicted it, which is the point. Node kills a
+    // process over an unhandled rejection, and `serve` is meant to stay open
+    // for hours.
+    const asDirectory = path.join(dir, "a-directory.tldr");
+    await fs.mkdir(asDirectory);
+    const server = await startServeServer({ root, file: asDirectory, port: 0 });
+    running.push(server);
+
+    const response = await fetch(`${server.origin}/api/document`);
+    expect(response.status).toBe(500);
+    expect(((await response.json()) as { error: string }).error).toMatch(/EISDIR|illegal|directory/i);
+
+    // Still listening, which is the half that matters.
+    expect((await fetch(`${server.origin}/api/health`)).status).toBe(200);
+  });
+});
+
 describe("GET /favicon.ico", () => {
   it("answers 204 with no body, so a served tab logs no failed request", async () => {
     const server = await start();
