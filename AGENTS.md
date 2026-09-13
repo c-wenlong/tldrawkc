@@ -174,6 +174,12 @@ The one long-lived command, and the only place two of the rules bend.
   the design docs: it runs until SIGINT. The CLI owns that wait, in
   `untilSignal()`, and closes the server before returning 0. Nothing in
   `src/lib/serve.ts` waits or prints.
+- **The signal listener goes on before the server, not after the URL.**
+  `watchForSignal()` is called first and awaited last. Installing it by
+  awaiting it at the end left a window between the URL reaching stdout and the
+  handler existing, and a Ctrl+C or a script that reads the URL and kills at
+  once met Node's default handling: exit 130, server never closed. Anything
+  added to `runServe` goes between the two, never before the watch.
 - **The browser is not Chromium.** `serve` spawns the platform's own opener
   (`open`, `xdg-open`, `cmd /c start`), detached, with every failure ignored:
   the URL is already on stdout, so a box with no opener should still serve the

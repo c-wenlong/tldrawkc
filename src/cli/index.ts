@@ -613,24 +613,43 @@ function serveLine(handle: ServeHandle): string {
   return `${handle.url}${fallback}  Ctrl+C to stop`;
 }
 
+interface SignalWatch {
+  /** Resolves with the first SIGINT or SIGTERM to arrive after this was made. */
+  signalled: Promise<NodeJS.Signals>;
+  /** Stop listening, for the paths that never reach the wait. */
+  dispose(): void;
+}
+
 /**
- * Resolve on the first SIGINT or SIGTERM.
+ * Start listening for SIGINT and SIGTERM, and hand back the promise.
  *
  * Layering rule 7's other half: `serve` is the long-lived command, so
  * something has to hold the process open and then let go. Installing a
  * listener is also what stops Node's default SIGINT handling from killing the
  * process before the server is closed.
+ *
+ * Separated from the wait because *when* the listener goes on matters. It used
+ * to be installed by awaiting this at the end of `runServe`, which left a
+ * window between the URL reaching stdout and the handler existing: a Ctrl+C in
+ * that window, or a script that reads the URL and kills the process at once,
+ * met Node's default handling and died with the server still open. The listener
+ * now goes on before anything is started, and the wait happens later.
  */
-function untilSignal(): Promise<NodeJS.Signals> {
-  return new Promise((resolve) => {
+function watchForSignal(): SignalWatch {
+  let dispose = (): void => undefined;
+  const signalled = new Promise<NodeJS.Signals>((resolve) => {
     const onSignal = (signal: NodeJS.Signals): void => {
+      dispose();
+      resolve(signal);
+    };
+    dispose = (): void => {
       process.removeListener("SIGINT", onSignal);
       process.removeListener("SIGTERM", onSignal);
-      resolve(signal);
     };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
   });
+  return { signalled, dispose: () => { dispose(); } };
 }
 
 async function runServe(
@@ -638,19 +657,28 @@ async function runServe(
   globals: GlobalOptions,
   options: CommandOptions,
 ): Promise<number> {
-  const handle = await serve({
-    file,
-    port: options.port,
-    open: options.open,
-    // Printed from the ready hook rather than after the await, so the URL is
-    // on stdout before the browser window opens over the terminal.
-    onReady: (ready) => {
-      if (globals.json) printJson({ url: ready.url, port: ready.port, file: ready.file });
-      else if (!globals.quiet) out(serveLine(ready));
-    },
-  });
+  // Before the server, not after the URL: see `watchForSignal`.
+  const watch = watchForSignal();
+  let handle;
+  try {
+    handle = await serve({
+      file,
+      port: options.port,
+      open: options.open,
+      // Printed from the ready hook rather than after the await, so the URL is
+      // on stdout before the browser window opens over the terminal.
+      onReady: (ready) => {
+        if (globals.json) printJson({ url: ready.url, port: ready.port, file: ready.file });
+        else if (!globals.quiet) out(serveLine(ready));
+      },
+    });
+  } catch (error) {
+    // Nothing is listening, so nothing should be holding the process open.
+    watch.dispose();
+    throw error;
+  }
 
-  await untilSignal();
+  await watch.signalled;
   await handle.close();
   return EXIT.ok;
 }

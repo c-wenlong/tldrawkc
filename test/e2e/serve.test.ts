@@ -93,8 +93,15 @@ interface ServeChild {
   /** The same origin with no path or query, for the API calls. */
   origin: string;
   port: number;
-  /** Resolves with the exit code when the process ends. */
-  exit: Promise<number>;
+  /**
+   * Resolves with how the process ended.
+   *
+   * Both halves, not a single number: a `code` of null with a `signal` set is
+   * a process the operating system killed, which is a different failure from
+   * one that exited with the wrong code, and a test that collapses them into
+   * `-1` cannot say which happened.
+   */
+  exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
 /**
@@ -112,8 +119,8 @@ async function startServe(extra: string[] = []): Promise<ServeChild> {
   );
   children.push(child);
 
-  const exit = new Promise<number>((resolve) => {
-    child.on("close", (code) => resolve(code ?? -1));
+  const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.on("close", (code, signal) => resolve({ code, signal }));
   });
 
   let stdout = "";
@@ -274,13 +281,17 @@ describe("serve", () => {
 
   it("stops on SIGINT with exit code 0", async () => {
     const served = await startServe();
+    // The instant the URL is readable, which is the window the CLI used to
+    // have no handler in: Node's own SIGINT handling would kill the process
+    // with the server still open, and the test saw a signal death rather than
+    // a slow one.
     served.child.kill("SIGINT");
-    const code = await Promise.race([
+    const ended = await Promise.race([
       served.exit,
-      new Promise<number>((resolve) => setTimeout(() => resolve(-1), 3_000)),
+      new Promise<"timed out">((resolve) => setTimeout(() => resolve("timed out"), 15_000)),
     ]);
-    expect(code).toBe(0);
-  });
+    expect(ended).toEqual({ code: 0, signal: null });
+  }, 30_000);
 
   it("refuses a file that does not exist", async () => {
     const result = await cli(["serve", path.join(dir, "missing.tldr"), "--no-open"], dir);
