@@ -447,10 +447,11 @@ and `api` reads a file the build generated rather than doing the work itself.
 
 Every option and result type is exported beside its function. The defaults for
 the flags live in the CLI's argument parser and not in the library, so several
-fields a flag would have filled in are required here: `padding`, `pixelRatio`
-and `timeoutMs`, where the CLI's own values are 32, 2 and 30000, and the
-booleans behind `--create`, `--no-save`, `--allow-lints`, `--append` and
-`--no-open`. Pass them every time.
+fields a flag would have filled in are required by the option types that carry
+them: `padding`, `pixelRatio` and `timeoutMs`, where the CLI's own values are
+32, 2 and 30000, and the booleans behind `--create`, `--no-save`,
+`--allow-lints`, `--append` and `--no-open`. Which of them a given verb takes
+is on its own type.
 
 ### A worked example
 
@@ -500,16 +501,18 @@ matching on message text. `isTldrawkcError(error)` narrows to that base, and
 
 | Error | `exitCode` | Raised when |
 | --- | --- | --- |
-| `UsageError` | 1 | Bad arguments, a missing file, a flag that contradicts another. Nothing was written and nothing was launched |
+| `UsageError` | 1 | Bad arguments, a missing file, a flag that contradicts another. Nothing was written |
 | `EnvironmentError` | 1 | The machine could not do the job: the browser would not launch, the page never answered, the bundle is stale, the snippet ran past its timeout |
 | `ChromiumNotFoundError` | 1 | No browser could be used. Carries `tried`, every path with its source and why it was rejected. Exported from `browser.ts`, not from `errors.ts` |
 | `SnippetError` | 2 | The snippet threw. Carries `snippetStack`, the stack the page reported, which points into the snippet's own lines. The document is untouched |
 | `ExportError` | 4 | The export failed after the document was saved. The `.tldr` is safe |
 
-Exit 3 is not an error. Lints are a normal result, so `run`, `inspect`,
-`exportCanvas` and `fromMermaid` all resolve and report it as `exitCode` on the
-returned object, 0 or 3, next to the `lints` array itself. `hasBlockingLints`
-is the one function that decides, and `severityOf` applies the default.
+Exit 3 is not an error. Lints are a normal result, so `run`, `inspect` and
+`fromMermaid` all resolve and report it as `exitCode` on the returned object,
+0 or 3, next to the `lints` array itself. `hasBlockingLints` is the one
+function that decides, and `severityOf` applies the default. `exportCanvas`
+runs no lint pass at all: its `ExportResult` has no `lints` and its `exitCode`
+is always 0, because an export neither executes nor saves anything.
 
 ### Beyond the verbs
 
