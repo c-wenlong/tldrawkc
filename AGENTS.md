@@ -483,18 +483,18 @@ this repo is a phase 3 or later concern.
 ## Relation to self-learn
 
 `tldrawkc` is a git submodule of
-[self-learn](https://github.com/c-wenlong/self-learn) at `tldrawkc/`, the same
-arrangement `manimkc/` has. That means:
+[self-learn](https://github.com/c-wenlong/self-learn) at `tools/tldrawkc/`, the
+same arrangement `manimkc/` has. That means:
 
 - **Commits here belong to this repo.** Commit and push here first, then bump
   the submodule pointer in self-learn. Never leave a pointer at an unpushed
   commit.
 - self-learn drives the tool through `npm run canvas -- <command>`, which is
-  `node tldrawkc/dist/cli/index.js`. A fresh clone needs
-  `git submodule update --init tldrawkc` and then `npm ci && npm run build` in
-  here before that works.
-- `tldrawkc/**` is in self-learn's ESLint ignore block. Lint this repo with
-  this repo's own config.
+  `node tools/tldrawkc/dist/cli/index.js`. A fresh clone needs
+  `git submodule update --init tools/tldrawkc` and then `npm ci && npm run build`
+  in here before that works.
+- `tools/tldrawkc/**` is in self-learn's ESLint ignore block. Lint this repo
+  with this repo's own config.
 - Committed artefacts (the `.tldr` source and the exported `.svg`) live in
   self-learn under `learn/assets/`, not here. PNGs are for looking at and are
   never committed anywhere.

@@ -105,8 +105,8 @@ As a git submodule, which is how [self-learn](https://github.com/c-wenlong/self-
 uses it:
 
 ```bash
-git submodule update --init tldrawkc
-(cd tldrawkc && npm ci && npm run build)
+git submodule update --init tools/tldrawkc
+(cd tools/tldrawkc && npm ci && npm run build)
 npm run canvas -- doctor
 ```
 
