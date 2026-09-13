@@ -173,10 +173,10 @@ The file is saved either way, because the work is real.
 
 A lint carries an optional `severity`. Absent means `error`, which is what
 drives exit 3; `warn` is printed and ignored by the exit code. `missing-topic`
-is the only warning, because every diagram drawn before metadata existed has no
-topic and failing them all would be the tool breaking work that is fine.
-`hasBlockingLints` in `src/lib/browser.ts` is the one place that decides, so
-`run`, `inspect` and `from-mermaid` cannot disagree.
+and `missing-glyph` are the two warnings, because every diagram drawn before
+those rules existed would fail on them and the tool must not break work that is
+fine. `hasBlockingLints` in `src/lib/browser.ts` is the one place that decides,
+so `run`, `inspect` and `from-mermaid` cannot disagree.
 
 ## Document metadata
 
@@ -441,6 +441,50 @@ Collected as they are found, so they are not rediscovered.
   312 kB from 454 kB and 560 kB, and the remainder is the drawing. Do not
   expect a diagram with a lot of geometry in it to reach "tens of kB" on the
   strength of the fonts alone.
+- **The four label fonts cannot draw most maths, and Shantell Sans is the
+  worst of them. Measured 2026-09-13** against `@tldraw/assets` 5.4.2, by
+  reading the `cmap` of every woff2 in `node_modules/@tldraw/assets/fonts/`
+  and confirming each character by rendering it in a real Chrome. Over the set
+  `√ · × ÷ ≤ ≥ ≠ ≈ ∞ ∑ ∏ π θ λ α β σ μ ² ³ ° ← → ↔ ⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ¬ ∧ ∨ ∂ ∇ ∫ − – — ‘ ’ “ ” …`
+  plus printable ASCII, what each font lacks is:
+
+  | `font` | Face measured | Has no glyph for |
+  | --- | --- | --- |
+  | `draw` | Shantell Sans Informal | `θ λ α β σ μ ⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇` |
+  | `sans` | IBM Plex Sans | `⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇` |
+  | `serif` | IBM Plex Serif | `⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇` |
+  | `mono` | IBM Plex Mono | `θ λ α β σ μ ⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇` |
+
+  Printable ASCII is complete in all four, and all four faces of a family
+  (regular, italic, bold, bold italic) cover exactly the same set. Two things
+  to take from it. **`√` is present everywhere**, so the thing that looks like
+  a plain `v` in a `draw` label is Shantell's own hand-drawn radical and not a
+  fallback; no lint can fire on it. And **`⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇` are in none
+  of the four**, so set-theory notation has no font to switch to and has to be
+  written out in words. That table is what `missing-glyph` checks against,
+  generated into `src/page/helpers/font-coverage.ts`.
+- **Neither `document.fonts.check()` nor canvas can tell you whether a font has
+  a glyph.** Both were tried before the `cmap` reader was written.
+  `document.fonts.check('40px tldraw_draw', 'θ')` is true, because the method
+  answers "is a face matching this family loaded", not "can it draw this": it
+  reported every character present in all four families. Canvas is no better,
+  because `ctx.font` takes a family list but ignores everything past the first
+  resolvable entry when it falls back, so a missing glyph lands in a system
+  font rather than the next family named and cannot be told from a hit. The DOM
+  does fall through, so `font-family: A, B` measuring exactly as wide as
+  `font-family: B` is a usable oracle, and it is the one
+  `test/e2e/font-coverage.test.ts` uses. It has two limits: the witness must
+  have different advance widths from the font under test (the three IBM Plex
+  faces share metrics, so only Shantell can witness them), and a character no
+  bundled font has cannot be ruled on at all.
+- **`src/lib/font-coverage.ts` reads woff2 with `node:zlib` and no third
+  dependency.** A woff2 is a table directory plus one brotli stream holding the
+  table data, and `cmap` is never one of the three tables woff2 transforms, so
+  its bytes come out of the stream exactly as they went in. Two traps: the
+  tables in the decompressed stream are **contiguous with no padding** (the
+  four-byte alignment belongs to the reconstructed sfnt, not to the stream),
+  and `glyf` and `loca` invert the transform flag, where version 0 means
+  transformed and version 3 means null.
 - **Nothing clips at a large coordinate; the export frame is what breaks.**
   Measured in a real Chrome: `toImage` and `getSvgString` both framed a box at
   x = 200000 correctly. What goes wrong is that every export is framed to the

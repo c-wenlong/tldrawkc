@@ -8,13 +8,21 @@
  * which is where the browser's own text measurement happens, is
  * `collectLintRecords` in `helpers/read.ts`.
  *
- * All eight rules live here: the six from HELPERS.md (`friendless-arrow`,
+ * All nine rules live here: the six from HELPERS.md (`friendless-arrow`,
  * `overlapping-text`, `overlapping-shapes`, `off-page`, `empty-label` and
- * `unreadable-label`), plus `arrow-crosses-shape` and `missing-topic`, which
- * phase 3 adds. `missing-topic` is the only one that is a warning rather than
- * an error, and the only one that reads the document instead of the page.
+ * `unreadable-label`), plus `arrow-crosses-shape`, `missing-glyph` and
+ * `missing-topic`. `missing-glyph` and `missing-topic` are the two warnings
+ * rather than errors, and `missing-topic` is the only rule that reads the
+ * document instead of the page.
+ *
+ * `missing-glyph` is the one rule with a table behind it. Which characters a
+ * font can draw is not something the page can work out at lint time, so the
+ * answer is generated from the font binaries into
+ * `helpers/font-coverage.ts`; `src/lib/font-coverage.ts` writes it and
+ * explains why the browser cannot be asked.
  */
 
+import { FONT_COVERAGE, type CoverageRange } from "./font-coverage.js";
 import type { Rect } from "./geometry.js";
 
 /**
@@ -69,6 +77,12 @@ export interface LintShape {
   text?: string;
   /** The geo kind (`rectangle`, `diamond`, ...). Geo shapes only. */
   geo?: string;
+  /**
+   * The label's font family, as the `font` prop names it: `draw`, `sans`,
+   * `serif` or `mono`. Read by `missing-glyph`, which is the only rule that
+   * cares which typeface the words are in. Absent on a shape with no label.
+   */
+  font?: string;
   /**
    * The shape this one hangs off: a page, a frame, or a container. Read by
    * `arrow-crosses-shape`, which exempts an arrow from the shape it lives in.
@@ -132,6 +146,7 @@ export const LINT_RULES = [
   "off-page",
   "empty-label",
   "unreadable-label",
+  "missing-glyph",
   "missing-topic",
 ] as const;
 
@@ -824,6 +839,112 @@ export function unreadableLabels(shapes: readonly LintShape[]): Lint[] {
   return lints;
 }
 
+/**
+ * Which family to reach for when the one in use cannot draw something.
+ *
+ * `sans` first because it is the plainest of the four and the one a teaching
+ * label loses least by moving to; `draw` last because it is the default, so a
+ * shape is only ever sent back to it when nothing else would do.
+ */
+const FALLBACK_FONTS = ["sans", "serif", "mono", "draw"] as const;
+
+/** Does `ranges` contain `code`? Ranges are sorted, so this bisects. */
+export function coversCodePoint(ranges: readonly CoverageRange[], code: number): boolean {
+  let low = 0;
+  let high = ranges.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const range = ranges[middle];
+    if (range === undefined) return false;
+    if (code < range[0]) high = middle - 1;
+    else if (code > range[1]) low = middle + 1;
+    else return true;
+  }
+  return false;
+}
+
+/**
+ * The characters in `text` that `font` has no glyph for, in the order they
+ * first appear and without repeats.
+ *
+ * Control characters and the characters a font never has to draw itself are
+ * skipped: anything below U+0020, plus the zero-width joiner and the variation
+ * selectors, which shape a neighbouring glyph rather than being one.
+ *
+ * A font name the table says nothing about answers "nothing missing" rather
+ * than "everything missing". A rule that fired on a family it has never heard
+ * of would be noise, and the table is regenerated from the fonts themselves,
+ * so an unknown name means the caller is ahead of it.
+ */
+export function missingCharacters(
+  font: string,
+  text: string,
+  coverage: Readonly<Record<string, readonly CoverageRange[]>> = FONT_COVERAGE,
+): string[] {
+  const ranges = coverage[font];
+  if (ranges === undefined) return [];
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    if (code === undefined || code < 0x20) continue;
+    if (code === 0x200d || (code >= 0xfe00 && code <= 0xfe0f)) continue;
+    if (seen.has(character)) continue;
+    seen.add(character);
+    if (!coversCodePoint(ranges, code)) missing.push(character);
+  }
+  return missing;
+}
+
+/**
+ * `missing-glyph`: a label asking for a character its font cannot draw.
+ *
+ * tldraw inlines only its own four faces into an SVG export, so a character
+ * none of them has is drawn by whatever the reader's machine falls back to:
+ * the label changes shape between machines, and in a raster export it comes
+ * out in a typeface nobody chose. Shantell Sans, the `draw` default, has no
+ * Greek beyond pi and none of the set-theory signs, which is most of what a
+ * maths diagram wants to say.
+ *
+ * A warning rather than an error, the same way `missing-topic` is. The picture
+ * is still a picture, the fallback is usually legible, and every diagram drawn
+ * before this rule existed would otherwise go red. What it costs is real
+ * though, which is why it is printed at all.
+ *
+ * The message names a family that can draw everything the label needs, so the
+ * fix is a one-word edit rather than a search.
+ */
+export function missingGlyph(
+  shapes: readonly LintShape[],
+  coverage: Readonly<Record<string, readonly CoverageRange[]>> = FONT_COVERAGE,
+): Lint[] {
+  const lints: Lint[] = [];
+  for (const shape of shapes) {
+    const font = shape.font;
+    const text = shape.text ?? "";
+    if (font === undefined || text === "") continue;
+    if (isLintIgnored(shape, "missing-glyph")) continue;
+    const missing = missingCharacters(font, text, coverage);
+    if (missing.length === 0) continue;
+
+    const rescue = FALLBACK_FONTS.find(
+      (candidate) =>
+        candidate !== font && missingCharacters(candidate, missing.join(""), coverage).length === 0,
+    );
+    const advice =
+      rescue === undefined
+        ? `no bundled font has ${missing.length === 1 ? "it" : "them"}, so rewrite the label`
+        : `set font: '${rescue}' on this shape`;
+    lints.push({
+      rule: "missing-glyph",
+      shapeIds: [shape.id],
+      message: `${shape.id}'s label is in font '${font}', which has no glyph for ${missing.join(" ")}, so a reader sees whatever their machine falls back to: ${advice}`,
+      severity: "warn",
+    });
+  }
+  return lints;
+}
+
 /** What the document-level rules read. Absent means "nobody asked about it". */
 export interface LintDocument {
   /** The document metadata, or `null` when the file carries none. */
@@ -883,6 +1004,7 @@ export function runLints(
     ...offPage(shapes),
     ...emptyLabels(shapes),
     ...unreadableLabels(shapes),
+    ...missingGlyph(shapes),
     ...missingTopic(document),
   ];
 }

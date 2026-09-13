@@ -461,9 +461,14 @@ export function createHelpers(editor: Editor): HelpersHandle {
   }
 
   /**
-   * Run the lint pass over the current page and return the findings. Seven
-   * rules: `friendless-arrow`, `arrow-crosses-shape`, `overlapping-text`,
-   * `overlapping-shapes`, `off-page`, `empty-label` and `unreadable-label`.
+   * Run the lint pass over the current page and return the findings. Eight
+   * shape rules: `friendless-arrow`, `arrow-crosses-shape`, `overlapping-text`,
+   * `overlapping-shapes`, `off-page`, `empty-label`, `unreadable-label` and
+   * `missing-glyph`, plus `missing-topic` on the document.
+   *
+   * `missing-glyph` is a warning: it fires when a label asks for a character
+   * its font has no glyph for, such as Greek or a set-theory sign in the
+   * `draw` font, and names a family that can draw it.
    *
    * `meta.lintIgnore` on a shape mutes a rule for it: an array of rule names,
    * or `true` for all of them.

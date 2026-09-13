@@ -293,7 +293,7 @@ vector-and-linear-algebra-basics     43  yes  vector-as-a-list-of-numbers.tldr
 ### The lint pass
 
 `run`, `inspect` and `from-mermaid` all report it, and a finding at error level
-is exit code 3. Eight rules:
+is exit code 3. Nine rules:
 
 | Rule | Fires when |
 | --- | --- |
@@ -304,12 +304,22 @@ is exit code 3. Eight rules:
 | `off-page` | A shape sits further than 10000 page units from the origin |
 | `empty-label` | A geo shape has no text and no fill, so it renders as an unexplained outline |
 | `unreadable-label` | The widest unbreakable run of a label is wider than the room the shape gives it |
+| `missing-glyph` | A label asks for a character its font has no glyph for, so the reader's machine picks the typeface. A **warning** |
 | `missing-topic` | The document names no topic, so a catalog cannot file it. A **warning**: printed, and never an exit code |
 
-`missing-topic` is the only warning. Every `.tldr` drawn before metadata existed
-has no topic, and failing them all would be this tool breaking work that is
-fine. It prints as `warn` rather than `lint` and `hasBlockingLints` ignores it,
-so exit code 3 still means the picture is wrong.
+`missing-glyph` and `missing-topic` are the two warnings. No `.tldr` written
+before either rule existed should go red over them, so both print as `warn`
+rather than `lint` and `hasBlockingLints` ignores them: exit code 3 still means
+the picture is wrong.
+
+`missing-glyph` matters most in the `draw` font. Shantell Sans, tldraw's
+default, has no Greek past pi and none of the set-theory signs, so `angle θ`
+comes out in whatever font the reader's machine falls back to, which is not the
+same font on two machines. The finding names a family that can draw the label,
+usually `sans`. The coverage it checks against is generated from the font files
+themselves into `src/page/helpers/font-coverage.ts`; `npm run generate:fonts`
+rewrites it and a test regenerates and diffs, so a tldraw upgrade cannot leave
+it stale.
 
 `meta.lintIgnore` on a shape mutes a rule for it: an array of rule names, or
 `true` for all of them. `helpers.stub` sets it, which is the only reason a
