@@ -177,6 +177,7 @@ describe("command options", () => {
       svg: undefined,
       create: false,
       save: true,
+      subsetFonts: true,
       output: undefined,
       ids: undefined,
       from: undefined,

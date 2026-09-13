@@ -154,6 +154,7 @@ tldrawkc run diagram.tldr --code draw.js --create --shot out.png
 tldrawkc shot diagram.tldr                # a PNG in the temp directory, path printed
 tldrawkc inspect diagram.tldr             # every shape, binding and lint. Exits 3 on lints
 tldrawkc export diagram.tldr --svg out.svg --png out.png
+tldrawkc export diagram.tldr --svg out.svg --no-subset-fonts   # whole fonts, for a hand edit
 tldrawkc from-mermaid map.tldr --source map.mmd
 tldrawkc list                             # every .tldr in learn/assets, with its topic
 tldrawkc meta set diagram.tldr --topic dot-product
@@ -188,6 +189,29 @@ and any other consumer.
 fonts inlined, a PNG, or both. Nothing is executed and nothing is saved, so the
 `.tldr` cannot be damaged by an export. The SVG carries the document's title and
 topic, if it has any; see below.
+
+#### The fonts in an exported SVG
+
+The fonts have to be inline. An SVG that a reader loads as an image (an
+Obsidian embed, a GitHub blob, an `<img src>`) fetches nothing at all, so a
+family that is not in the file is a family the reader never sees, and the
+labels silently come out in a system font.
+
+Inlining the whole of every family is expensive: Shantell Sans alone is about
+205 kB of base64, and a teaching diagram uses forty characters of it. So
+`export --svg` and `run --svg` cut each inlined face down to the characters the
+document actually draws, and drop any family nothing references. On the
+eight-node flowchart in `test/fixtures/mermaid/subgraph-8-9.mmd` that is
+205 kB of font down to 32 kB, with the picture rendering pixel for pixel the
+same.
+
+Pass `--no-subset-fonts` to inline the whole families instead. That is what a
+diagram you mean to edit by hand in the SVG later wants: a subset font has no
+glyph for a letter the drawing does not already contain.
+
+`--json` reports `svg.bytes` and `svg.fontsSubset` on `export`, and `svgBytes`
+and `svgFontsSubset` on `run`. A face the subsetter cannot read keeps its whole
+payload and is named in `svg.fontWarnings`; subsetting never fails an export.
 
 `from-mermaid` lifts an existing flowchart onto the canvas, which is the point
 of the whole tool for a repo whose diagrams are all mermaid today:

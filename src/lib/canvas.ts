@@ -27,6 +27,7 @@ import {
   type ShotOptions,
   type SvgOptions,
 } from "./browser.js";
+import { subsetSvgFonts } from "./fonts.js";
 import {
   applyMeta,
   isEmptyPatch,
@@ -70,6 +71,18 @@ export interface RunOptions extends CommonOptions {
   shot?: string | undefined;
   /** Where to write an SVG after the snippet, or nothing. */
   svg?: string | undefined;
+  /**
+   * Cut the SVG's inlined fonts down to the glyphs it draws.
+   *
+   * On unless it is explicitly `false`, which is what `--no-subset-fonts`
+   * passes and what a diagram destined for a later hand edit wants: a subset
+   * font has no glyph for a letter the drawing does not already contain.
+   *
+   * Optional, and absent means on. A required field here would stop every
+   * existing caller of the library compiling, and would leave a JavaScript
+   * caller that omits it quietly exporting whole fonts.
+   */
+  subsetFonts?: boolean | undefined;
   /** Start from an empty document when the file does not exist. */
   create: boolean;
   /** False for `--no-save`: run and export, leave the file alone. */
@@ -97,6 +110,18 @@ export interface RunResult {
   shot: string | null;
   /** Where the SVG went, or `null` when none was asked for. */
   svg: string | null;
+  /**
+   * The SVG's size on disk in bytes, or `null` when none was written.
+   *
+   * Beside `svg` rather than folded into it, because CLI.md pins `run`'s
+   * `svg` as a path string and a caller that reads it should not have to
+   * change to read the new fields.
+   */
+  svgBytes: number | null;
+  /** Were the SVG's fonts subset? `null` when no SVG was written. */
+  svgFontsSubset: boolean | null;
+  /** One line per font face that kept its full payload, and why. */
+  svgFontWarnings: string[];
   /** Wall clock for the whole command, in milliseconds. */
   ms: number;
   /** False when `--no-save` kept the document untouched. */
@@ -185,7 +210,10 @@ export async function run(options: RunOptions): Promise<RunResult> {
         shapeCount: exec.shapeCount,
         lints,
         shot,
-        svg,
+        svg: svg?.path ?? null,
+        svgBytes: svg?.bytes ?? null,
+        svgFontsSubset: svg?.fontsSubset ?? null,
+        svgFontWarnings: svg?.fontWarnings ?? [],
         ms: Date.now() - started,
         saved,
         exitCode: hasBlockingLints(lints) && !options.allowLints ? 3 : 0,
@@ -349,6 +377,12 @@ export interface ExportOptions extends CommonOptions {
   svg?: string | undefined;
   /** Where to write the PNG. */
   png?: string | undefined;
+  /**
+   * Cut the SVG's inlined fonts down to the glyphs it draws.
+   *
+   * On unless explicitly `false`; see {@link RunOptions.subsetFonts}.
+   */
+  subsetFonts?: boolean | undefined;
   /** Frame only these shapes. Empty or absent means every shape on the page. */
   ids?: string[] | undefined;
   page?: string | undefined;
@@ -363,9 +397,32 @@ export interface ExportedFile {
   height: number;
 }
 
+/**
+ * An SVG export, which additionally reports its size and what happened to its
+ * fonts.
+ *
+ * `bytes` is on this type and not on {@link ExportedFile} because it is the
+ * number the font work exists to move: a PNG's size is what it is, and adding
+ * a field to the PNG half of the JSON would be churn with nothing behind it.
+ */
+export interface ExportedSvg extends ExportedFile {
+  /** The file's size on disk, in bytes. */
+  bytes: number;
+  /** True when at least one inlined face was subset or dropped. */
+  fontsSubset: boolean;
+  /**
+   * One line per face that kept its full payload, and why.
+   *
+   * A warning and not an error on purpose: subsetting is an optimisation over
+   * a picture that is already correct, so a font harfbuzz refuses costs bytes
+   * rather than the export.
+   */
+  fontWarnings: string[];
+}
+
 export interface ExportResult {
   file: string;
-  svg: ExportedFile | null;
+  svg: ExportedSvg | null;
   png: ExportedFile | null;
   ms: number;
   exitCode: number;
@@ -434,14 +491,16 @@ export async function exportCanvas(options: ExportOptions): Promise<ExportResult
 
       const ids = options.ids && options.ids.length > 0 ? options.ids : undefined;
 
-      let svg: ExportedFile | null = null;
+      let svg: ExportedSvg | null = null;
       if (svgTarget) {
         const svgOptions: SvgOptions = { padding: options.padding };
         if (ids) svgOptions.ids = ids;
         try {
           const exported = await canvas.svg(svgOptions);
-          await writeText(svgTarget, stampSvg(exported.svg, metaOf(existing)));
-          svg = { path: svgTarget, width: exported.width, height: exported.height };
+          svg = await writeSvg(svgTarget, exported.svg, metaOf(existing), options.subsetFonts, {
+            width: exported.width,
+            height: exported.height,
+          });
         } catch (error) {
           throw new ExportError(`the SVG export failed: ${firstLine(error)}`, { cause: error });
         }
@@ -930,17 +989,52 @@ async function exportSvg(
   canvas: CanvasHandle,
   options: RunOptions,
   meta: DiagramMeta | null,
-): Promise<string | null> {
+): Promise<ExportedSvg | null> {
   if (options.svg === undefined) return null;
   const target = resolveOutputPath(options.svg, options.cwd);
   try {
     const exported = await canvas.svg({ padding: options.padding });
-    return await writeText(target, stampSvg(exported.svg, meta));
+    return await writeSvg(target, exported.svg, meta, options.subsetFonts, {
+      width: exported.width,
+      height: exported.height,
+    });
   } catch (error) {
     throw new ExportError(`the document was saved but the SVG failed: ${firstLine(error)}`, {
       cause: error,
     });
   }
+}
+
+/**
+ * Stamp the metadata on, subset the fonts, write the file, report the result.
+ *
+ * The order is deliberate. `stampSvg` adds a `<title>`, so subsetting has to
+ * come after it or the title's characters would be missing from the subset.
+ * They are not drawn as glyphs today, but a title is text in the file and the
+ * rule that the subset covers every character in the document it ships with is
+ * the one worth keeping.
+ *
+ * `subsetSvgFonts` never throws, so nothing here can turn a working export
+ * into an exit 4.
+ */
+async function writeSvg(
+  target: string,
+  raw: string,
+  meta: DiagramMeta | null,
+  subsetFonts: boolean | undefined,
+  size: { width: number; height: number },
+): Promise<ExportedSvg> {
+  const stamped = stampSvg(raw, meta);
+  const fonts = await subsetSvgFonts(stamped, { enabled: subsetFonts });
+  await writeText(target, fonts.svg);
+  return {
+    path: target,
+    width: size.width,
+    height: size.height,
+    bytes: Buffer.byteLength(fonts.svg, "utf8"),
+    fontsSubset: fonts.subset,
+    fontWarnings: fonts.warnings,
+  };
 }
 
 function firstLine(error: unknown): string {

@@ -85,6 +85,9 @@ describe("dependencies", () => {
     const manifest = JSON.parse(
       await fs.readFile(path.join(PACKAGE_ROOT, "package.json"), "utf8"),
     ) as { dependencies?: Record<string, string> };
-    expect(Object.keys(manifest.dependencies ?? {})).toEqual(["playwright-core"]);
+    expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual([
+      "playwright-core",
+      "subset-font",
+    ]);
   });
 });

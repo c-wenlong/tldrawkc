@@ -71,7 +71,14 @@ interface MermaidJson {
 
 interface ExportJson {
   file: string;
-  svg: { path: string; width: number; height: number } | null;
+  svg: {
+    path: string;
+    width: number;
+    height: number;
+    bytes: number;
+    fontsSubset: boolean;
+    fontWarnings: string[];
+  } | null;
   png: { path: string; width: number; height: number } | null;
   ms: number;
 }
@@ -213,6 +220,24 @@ function readableSvg(svg: string): string {
 }
 
 /**
+ * The font families the SVG inlines, with the size of each payload.
+ *
+ * `getSvgString` writes one `@font-face` per family it needs, with the woff2
+ * as a base64 `data:` URL. Reading the families back is how a test says "both
+ * faces survived" without knowing anything about woff2.
+ */
+function inlinedFonts(svg: string): Array<{ family: string; payload: number }> {
+  const faces: Array<{ family: string; payload: number }> = [];
+  for (const block of svg.matchAll(/@font-face\s*\{([^}]*)\}/g)) {
+    const body = block[1] ?? "";
+    const family = /font-family:\s*"?([^";\n]+)/.exec(body)?.[1]?.trim() ?? "";
+    const payload = /base64,([A-Za-z0-9+/=]+)/.exec(body)?.[1] ?? "";
+    faces.push({ family, payload: payload.length });
+  }
+  return faces;
+}
+
+/**
  * A PNG's real pixel size, read from its IHDR chunk.
  *
  * The header starts at byte 16 with width then height as big-endian 32-bit
@@ -335,6 +360,122 @@ describe("export", () => {
     const result = await cli(["export", "diagram.tldr"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("--svg");
+  });
+});
+
+describe("export --svg font subsetting", () => {
+  it("cuts the eight-node map to a fraction of its weight, labels intact", async () => {
+    const source = path.join(FIXTURES, "subgraph-8-9.mmd");
+    const labels = mermaidLabels(await fs.readFile(source, "utf8"));
+    expect(await cli(["from-mermaid", "diagram.tldr", "--source", source])).toHaveProperty(
+      "code",
+      0,
+    );
+
+    const small = await cli(["export", "diagram.tldr", "--svg", "small.svg", "--json"]);
+    expect(small.code).toBe(0);
+    const json = JSON.parse(small.stdout) as ExportJson;
+    expect(json.svg?.fontsSubset).toBe(true);
+    expect(json.svg?.fontWarnings).toEqual([]);
+
+    const svg = await fs.readFile(path.join(dir, "small.svg"), "utf8");
+    // The reported size is the file's size, not an estimate.
+    expect(json.svg?.bytes).toBe(Buffer.byteLength(svg, "utf8"));
+
+    // Still self-contained, and still the hand-drawn face: an SVG rendered as
+    // an image fetches nothing, so a face that is gone is a face the reader
+    // never sees.
+    const faces = inlinedFonts(svg);
+    expect(faces.map((face) => face.family)).toContain("tldraw_draw");
+    expect(faces.every((face) => face.payload > 0)).toBe(true);
+
+    // The number this feature moves. Shantell Sans whole is about 205 kB of
+    // base64; eight labels of it are a fraction of that. The file as a whole
+    // is not asserted on, because the rest of it is the drawing: this fixture
+    // is 83 kB of path data whatever the fonts do.
+    const payload = faces.reduce((total, face) => total + face.payload, 0);
+    expect(payload).toBeLessThan(60_000);
+
+    const readable = readableSvg(svg);
+    for (const label of labels) {
+      expect(readable, `the SVG is missing "${label}"`).toContain(label);
+    }
+  });
+
+  it("keeps the whole font for --no-subset-fonts, and says so", async () => {
+    const source = path.join(FIXTURES, "subgraph-8-9.mmd");
+    expect(await cli(["from-mermaid", "diagram.tldr", "--source", source])).toHaveProperty(
+      "code",
+      0,
+    );
+
+    const small = await cli(["export", "diagram.tldr", "--svg", "small.svg", "--json"]);
+    const whole = await cli([
+      "export",
+      "diagram.tldr",
+      "--svg",
+      "whole.svg",
+      "--no-subset-fonts",
+      "--json",
+    ]);
+    expect(small.code).toBe(0);
+    expect(whole.code).toBe(0);
+
+    const smallJson = JSON.parse(small.stdout) as ExportJson;
+    const wholeJson = JSON.parse(whole.stdout) as ExportJson;
+    expect(wholeJson.svg?.fontsSubset).toBe(false);
+    // The flag is what a diagram destined for a hand edit asks for, so it has
+    // to give back the file it would have got before any of this existed.
+    expect(wholeJson.svg?.bytes ?? 0).toBeGreaterThan((smallJson.svg?.bytes ?? 0) * 2);
+
+    const wholeFaces = inlinedFonts(await fs.readFile(path.join(dir, "whole.svg"), "utf8"));
+    const smallFaces = inlinedFonts(await fs.readFile(path.join(dir, "small.svg"), "utf8"));
+    expect(wholeFaces.map((face) => face.family)).toEqual(smallFaces.map((face) => face.family));
+    for (const [index, face] of smallFaces.entries()) {
+      expect(face.payload).toBeLessThan(wholeFaces[index]?.payload ?? 0);
+    }
+  });
+
+  it("keeps both faces on a canvas that mixes draw and sans", async () => {
+    // Two families in the drawing, so two have to survive: subsetting must
+    // shrink a face, never decide a used one is spare.
+    await fs.writeFile(
+      path.join(dir, "mixed.js"),
+      [
+        "helpers.box('hand', 'drawn label', { x: 60, y: 60, w: 200, h: 64 })",
+        "helpers.box('typed', 'typed label', { below: 'hand', gap: 120, w: 200, h: 64, font: 'sans' })",
+        "return helpers.getLints()",
+      ].join("\n"),
+    );
+    const drawn = await cli([
+      "run",
+      "diagram.tldr",
+      "--code",
+      "mixed.js",
+      "--create",
+      "--allow-lints",
+    ]);
+    expect(drawn.code).toBe(0);
+
+    const exported = await cli(["export", "diagram.tldr", "--svg", "mixed.svg", "--json"]);
+    expect(exported.code).toBe(0);
+    expect((JSON.parse(exported.stdout) as ExportJson).svg?.fontsSubset).toBe(true);
+
+    const faces = inlinedFonts(await fs.readFile(path.join(dir, "mixed.svg"), "utf8"));
+    const families = faces.map((face) => face.family).sort();
+    expect(families).toEqual(["tldraw_draw", "tldraw_sans"]);
+    expect(faces.every((face) => face.payload > 0)).toBe(true);
+    // The two families tldraw never inlined stay absent, which is what the
+    // "drop what nothing uses" half of this exists to guarantee.
+    expect(families).not.toContain("tldraw_mono");
+    expect(families).not.toContain("tldraw_serif");
+  });
+
+  it("reports the size on the human line too", async () => {
+    await drawFourBoxes();
+    const result = await cli(["export", "diagram.tldr", "--svg", "out.svg"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toMatch(/svg {3}.*\d+x\d+ {2}[\d.]+ kB, fonts subset/);
   });
 });
 

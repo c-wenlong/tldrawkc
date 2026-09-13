@@ -71,6 +71,7 @@ Commands
       --svg <out.svg>            write an SVG after the snippet
       --create                   start from an empty document if the file is missing
       --no-save                  run and export, leave the document untouched
+      --no-subset-fonts          inline whole fonts in the SVG, not just the glyphs used
   shot <file.tldr>               screenshot without running anything
       -o, --output <out.png>     where the PNG goes (default: a temp file)
       --ids a,b,c                frame only these shapes
@@ -82,9 +83,10 @@ Commands
       --concept <slug>           a concept slug, repeatable
       --source <text>            what prompted this diagram
   export <file.tldr>             write the files that get committed
-      --svg <out.svg>            self-contained SVG, fonts inlined
+      --svg <out.svg>            self-contained SVG, fonts inlined and subset to the glyphs used
       --png <out.png>            PNG at --pixel-ratio
       --ids a,b,c                frame only these shapes
+      --no-subset-fonts          inline whole fonts instead, for an SVG to be hand edited
   from-mermaid <file.tldr>       build a document from a mermaid flowchart
       --source <path.mmd>        the flowchart, or - to read stdin
       --append                   add to an existing document instead of refusing
@@ -183,7 +185,10 @@ function printRun(result: RunResult, allowLints: boolean): void {
   );
   out(result.saved ? `saved ${result.file}` : `not saved (--no-save) ${result.file}`);
   if (result.shot) out(`shot  ${result.shot}`);
-  if (result.svg) out(`svg   ${result.svg}`);
+  if (result.svg) {
+    out(`svg   ${result.svg}${sizeNote(result.svgBytes, result.svgFontsSubset)}`);
+  }
+  printFontWarnings(result.svgFontWarnings);
   printLints(result.lints);
   if (lints > 0 && allowLints) out("lints allowed (--allow-lints), exiting 0");
 }
@@ -234,6 +239,7 @@ async function runRun(
     evalSource: fromStdin ? await readStdin() : options.evalSource,
     shot: options.shot,
     svg: options.svg,
+    subsetFonts: options.subsetFonts,
     create: options.create,
     save: options.save,
     allowLints: globals.allowLints,
@@ -246,7 +252,10 @@ async function runRun(
   });
 
   if (globals.json) {
-    // Exactly the object CLI.md specifies, in that order.
+    // The object CLI.md specifies, in that order, plus two additive fields.
+    // `svg` stays the path string it has always been, because a consumer
+    // reading it should not have to change; the size and whether the fonts
+    // were subset ride alongside it rather than turning it into an object.
     printJson({
       file: result.file,
       result: result.result,
@@ -254,6 +263,8 @@ async function runRun(
       lints: result.lints,
       shot: result.shot,
       svg: result.svg,
+      svgBytes: result.svgBytes,
+      svgFontsSubset: result.svgFontsSubset,
       ms: result.ms,
     });
   } else if (!globals.quiet) {
@@ -445,13 +456,35 @@ async function runInspect(file: string, globals: GlobalOptions): Promise<number>
   return result.exitCode;
 }
 
+/**
+ * `  12.4 kB, fonts subset`, or nothing when no SVG was written.
+ *
+ * The size is on the human line because it is the number a caller is about to
+ * commit, and "fonts subset" is there so a surprisingly large file says why in
+ * the same breath.
+ */
+function sizeNote(bytes: number | null, fontsSubset: boolean | null): string {
+  if (bytes === null) return "";
+  const kb = (bytes / 1000).toFixed(1);
+  return `  ${kb} kB${fontsSubset === true ? ", fonts subset" : ""}`;
+}
+
+/** A face that kept its full payload. Never an error: the picture is fine. */
+function printFontWarnings(warnings: readonly string[]): void {
+  for (const warning of warnings) out(`warn  font  ${warning}`);
+}
+
 function printExport(result: ExportResult): void {
   if (result.svg) {
-    out(`svg   ${result.svg.path}  ${String(result.svg.width)}x${String(result.svg.height)}`);
+    out(
+      `svg   ${result.svg.path}  ${String(result.svg.width)}x${String(result.svg.height)}` +
+        sizeNote(result.svg.bytes, result.svg.fontsSubset),
+    );
   }
   if (result.png) {
     out(`png   ${result.png.path}  ${String(result.png.width)}x${String(result.png.height)}`);
   }
+  if (result.svg) printFontWarnings(result.svg.fontWarnings);
 }
 
 async function runExport(
@@ -463,6 +496,7 @@ async function runExport(
     file,
     svg: options.svg,
     png: options.png,
+    subsetFonts: options.subsetFonts,
     ids: options.ids,
     page: globals.page,
     padding: globals.padding,

@@ -25,6 +25,7 @@ written yet; `tldrawkc help` lists which phase brings it.
 | `src/lib/browser.ts` | resolving Chromium, opening the page, the typed wrapper over every bridge call, and `withCanvas` |
 | `src/lib/server.ts` | the static server for `dist/page`, on 127.0.0.1 and a random free port |
 | `src/lib/canvas.ts` | one function per verb that needs a browser: `run`, `shot`, `newDocument`, `inspect`, `exportCanvas`, `fromMermaid`. Takes data, returns data |
+| `src/lib/fonts.ts` | the SVG font subsetter: which characters a document draws, and the `@font-face` surgery. Pure apart from the one call into harfbuzz |
 | `src/lib/meta.ts` | the document metadata: the shape, the `.tldr` JSON surgery, `meta set`, and the SVG stamp. No browser |
 | `src/lib/list.ts` | `list`: a directory of `.tldr` files as data. No browser |
 | `src/lib/api.ts` | the helper reference: a parser over the page's JSDoc, plus the build step that writes `dist/api.json` |
@@ -408,6 +409,38 @@ Collected as they are found, so they are not rediscovered.
   Inkscape) will drop every label. Browsers render it correctly. Fonts are
   inlined the way the design assumed: the SVG opens with `@font-face` blocks
   whose `src` is a `data:font/woff2;base64,` URL.
+- **The fonts must stay inline, and that is why they are subset instead.** An
+  SVG a reader loads as an image (an Obsidian embed, a GitHub blob, an
+  `<img src>`) is in a document context that fetches nothing: no stylesheet,
+  no font file, no anything. A family that is not in the file is a family that
+  silently falls back to a system font, and nobody notices until they look at
+  the picture. So "link the fonts instead of inlining them" is not an option
+  and never will be, which is what leaves subsetting as the way to get the
+  weight down. `src/lib/fonts.ts` does it on the Node side, over the string
+  the page handed back, after `stampSvg`: it collects every character the
+  document draws, hands each face to harfbuzz with that set, and splices the
+  smaller payload back in. Measured on the eight-node mermaid fixture,
+  205 kB of base64 became 32 kB and the rendered PNG was pixel for pixel
+  identical.
+- **tldraw inlines only the families the drawing uses, not all four.** Checked
+  against real exports: a canvas of `font: 'draw'` labels gets one
+  `@font-face`, and adding one `font: 'sans'` label gets a second. So the
+  "drop what nothing references" pass in `fonts.ts` is a guard rather than the
+  win it was expected to be, and the win is the subsetting.
+- **The subsetter over-collects on purpose.** A missing glyph is invisible
+  until somebody looks at the picture; an extra glyph costs about half a
+  kilobyte. That is why the scanner walks tags rather than stripping them with
+  `<[^>]*>` (an attribute value may contain `>`), decodes entities and leaves
+  the ones it does not know intact so their letters still land in the set, and
+  why a fixed safety set of digits and punctuation goes in whatever the
+  document says. It is also why a face harfbuzz refuses keeps its whole
+  payload and becomes a warning: subsetting is an optimisation over a picture
+  that is already correct, so it must never be able to fail an export.
+- **The font bytes are not the whole file.** After subsetting, a committed SVG
+  is mostly path data: the two self-learn diagrams came out at 213 kB and
+  312 kB from 454 kB and 560 kB, and the remainder is the drawing. Do not
+  expect a diagram with a lot of geometry in it to reach "tens of kB" on the
+  strength of the fonts alone.
 - **Nothing clips at a large coordinate; the export frame is what breaks.**
   Measured in a real Chrome: `toImage` and `getSvgString` both framed a box at
   x = 200000 correctly. What goes wrong is that every export is framed to the
@@ -515,8 +548,12 @@ same arrangement `manimkc/` has. That means:
 - Branch from `main`, never commit to it. One concern per PR. Run
   `npm run lint && npm run typecheck && npm test && npm run build` before
   opening one.
-- Justify a new runtime dependency in the PR body. There is exactly one today
-  (`playwright-core`) and that is the point.
+- Justify a new runtime dependency in the PR body. There are exactly two today
+  (`playwright-core` and `subset-font`) and `test/unit/layering.test.ts` pins
+  that list, so adding a third is a deliberate act with a red test in front of
+  it. `subset-font` is harfbuzz's own `hb-subset` as wasm, with no native
+  build, no install script and no postinstall download; its tree is about
+  4.7 MB on disk and every licence in it is permissive (BSD-3-Clause or MIT).
 - Add a unit test for anything in `src/lib` or `src/cli`. The page is checked
   end to end, by looking at what it drew.
 - `test/e2e/node-side.test.ts` drives the library against the stand-in bridge
