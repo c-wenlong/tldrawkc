@@ -20,13 +20,15 @@ against.
 
 One Node program and one browser page. The page is a Vite build of tldraw
 with a `helpers` bag (bound arrows, boxes, layout, a mermaid importer, a lint
-pass) and a small bridge Node can call. Every command launches headless
-Chromium, loads a `.tldr` file, runs a JavaScript snippet against the live
-editor, saves the file, and optionally writes a PNG or SVG. The agent reads
-the PNG with its Read tool and sends the next snippet. A `serve` command opens
-the same file in a normal browser tab for a human, reloading on change and
-saving Cmd+S back. No daemon, no sync server, no React in the host repo's
-dependency tree.
+pass) and a small bridge Node can call. `run`, the verb that draws, launches
+headless Chromium, loads a `.tldr` file, runs a JavaScript snippet against the
+live editor, saves the file, and optionally writes a PNG or SVG. The agent
+reads the PNG with its Read tool and sends the next snippet. The other verbs
+are that lifecycle with steps left out: `shot`, `inspect` and `export` open
+the page and never run a snippet or save, `list` and `meta set` open no
+browser at all, and `serve` opens the human's own, on the same file, reloading
+it on change and saving Cmd+S back. No daemon, no sync server, no React in the
+host repo's dependency tree.
 
 ## Where this came from
 

@@ -366,7 +366,7 @@ alongside document metadata, and `missing-glyph` added in phase 4.
 | `off-page` | A shape sits further than `OFF_PAGE_LIMIT` (10000 page units) from the origin in any direction, positive or negative |
 | `empty-label` | A geo shape has no text and no fill and is not a container, so it renders as an unexplained outline |
 | `unreadable-label` | The widest unbreakable run of a label is wider than the room the shape gives it |
-| `missing-glyph` | A label's font has no glyph for a character in it, so the reader's machine picks the typeface. `draw` (Shantell Sans) has no Greek past pi; no bundled font has `⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇`. A warning, like `missing-topic` |
+| `missing-glyph` | A label's font has no glyph for a character in it, so the reader's machine picks the typeface. `draw` (Shantell Sans) and `mono` have no `θ λ α β σ μ`, though `π` is there; no bundled font has `⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇`. A warning, like `missing-topic` |
 | `missing-topic` | The document names no topic, so a catalog cannot file it |
 
 Three of those rows were written from a guess and are corrected here against

@@ -241,11 +241,12 @@ closed the one about maths labels going unwarned.
 - **Set-theory notation cannot be drawn at all.** Corrected from what this
   list used to claim: `√` is present in all four bundled families, and the
   thing that looks like a plain `v` in a `draw` label is Shantell Sans' own
-  hand-drawn radical rather than a fallback. What is actually missing is Greek
-  past pi in `draw` and `mono`, which `missing-glyph` now warns about and
-  `font: 'sans'` fixes, and `⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇`, which no bundled font
-  has. The last of those has no fix inside the tool: the label has to say the
-  word.
+  hand-drawn radical rather than a fallback. What is actually missing, measured
+  face by face, is `θ λ α β σ μ` in `draw` and `mono` (`π` is present in all
+  four, so "no Greek" is too broad and "none past pi" is wrong in the other
+  direction), which `missing-glyph` now warns about and `font: 'sans'` fixes,
+  and `⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇`, which no bundled font has. The last of those has
+  no fix inside the tool: the label has to say the word.
 
 ## Phase 5. Optional: MCP entry and a warm browser
 

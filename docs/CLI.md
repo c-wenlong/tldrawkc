@@ -29,7 +29,7 @@ Global options:
 | `--json` | off | Print exactly one JSON object on stdout and nothing else. Errors still go to stderr. |
 | `--headed` | off | Show the Chromium window while the command runs. Debugging only. Reaches every verb that opens one. |
 | `--quiet` | off | Suppress the human summary. |
-| `--allow-lints` | off | Turn exit code 3 into 0. For diagrams whose remaining lints are intentional and marked with `meta.lintIgnore`. Applies to `run`, `from-mermaid` and `inspect`. |
+| `--allow-lints` | off | Turn exit code 3 into 0. Applies to `run`, `from-mermaid` and `inspect`. It is blunt: every remaining error-level finding is accepted, and the tool checks nothing about why. A finding you actually mean to keep is better muted per shape with `meta.lintIgnore`, which drops it from the list rather than from the exit code. |
 | `--chromium <path>` | auto | Executable to use. Otherwise `TLDRAWKC_CHROMIUM`, then Playwright's registry, then the Chrome and Chromium apps installed on the machine. |
 | `--timeout <ms>` | 30000 | Cap on the `exec` step. |
 | `--page <name>` | first page | Operate on a named page. Applies to `run`, `shot`, `inspect`, `export`. |
@@ -461,9 +461,10 @@ makes such a verb fail with "not built yet" rather than "unknown command".
 
 `3` is deliberate: the file is saved because the work is real, but the
 non-zero code stops an agent from declaring the diagram finished. Pass
-`--allow-lints` to turn it into 0 for intentionally decorative arrows,
-paired with `meta.lintIgnore` on those shapes. A lint at `warn` severity
-(`missing-topic`, `missing-glyph`) prints and never reaches the exit code.
+`--allow-lints` to turn it into 0 for intentionally decorative arrows, and
+prefer `meta.lintIgnore` on those shapes, which says which findings were meant
+instead of accepting all of them. A lint at `warn` severity (`missing-topic`,
+`missing-glyph`) prints and never reaches the exit code.
 
 ## Environment variables
 
