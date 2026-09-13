@@ -37,14 +37,18 @@ that instead of guessing at helper names.
    `tldrawkc new <file> --topic <slug> --title "<a human title>" --concept <slug>`.
    Then run the snippet:
    `tldrawkc run <file> --code <snippet.js> --shot <out.png>`.
-   `--code -` reads the snippet from stdin, so a heredoc leaves no file
-   behind. `--create` starts from an empty document when the file is missing,
+   `--code` takes a path, or `-` to read the snippet from stdin, so a heredoc
+   leaves no file behind; `--eval "<source>"` is the inline form for a
+   one-liner and the two are mutually exclusive. `--create` starts from an
+   empty document when the file is missing,
    which is the shortcut worth avoiding here: it writes no topic, and the run
    will warn `missing-topic`. Use `helpers.box` and `helpers.connect`; never
    build a raw arrow shape for a real connection.
 3. **Look.** Open the PNG with the Read tool. Judge it as a stranger would:
    clipped or overlapping text, arrows crossing boxes, a label sitting on a
-   line, a reading order that is not obvious.
+   line, a reading order that is not obvious. `tldrawkc shot <file>`
+   re-screenshots without running anything, to a temp file whose path it
+   prints unless `-o <out.png>` says where.
 4. **Fix with a second snippet**, not by starting over. `run` is idempotent
    on ids, so re-running a box or a connect updates it. Nudge positions, move
    an anchor, change `mid` on an arrow that routes badly, widen a box whose
@@ -163,9 +167,9 @@ does not already contain.
 - The words on a card are that card's label, not a separate text shape.
 - Keep boxes at 160 by 60 or larger at the default font.
 - Maths in the default `draw` font gets a `missing-glyph` warning: Shantell
-  Sans has no Greek past pi and no set-theory signs. Set `font: 'sans'` on that
-  label, and write `∈`, `∪`, `∩`, `∀` and `∃` out in words, since no bundled
-  font can draw them.
+  Sans has no `θ`, `λ`, `α`, `β`, `σ` or `μ` (it does have `π`) and no
+  set-theory signs. Set `font: 'sans'` on that label, and write `∈`, `∪`, `∩`,
+  `∀` and `∃` out in words, since no bundled font can draw them.
 
 ## Snippet conventions
 

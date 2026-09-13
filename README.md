@@ -413,13 +413,22 @@ use this tool: the draw, look, fix, export loop, the snippet conventions, and
 where the committed files go in self-learn, which symlinks it into its own
 `.claude/skills/`.
 
-## Design
+## Design docs
 
-The brief this is built from lives in the self-learn repo under
-[tldraw-integration/](https://github.com/c-wenlong/self-learn/tree/main/tldraw-integration):
-the decisions already made, the architecture, the full CLI reference, the
-helper vocabulary, and the phase roadmap. [AGENTS.md](AGENTS.md) is the
-operating manual for working in this repo.
+The brief this tool was built from, in [docs/](docs/README.md). It was written
+before any of the code existed and corrected against the code as each phase
+landed, so it says why as well as what.
+
+| Document | What it settles |
+| --- | --- |
+| [DECISIONS.md](docs/DECISIONS.md) | The forty-three calls already made, each with its verdict and the reason, so none of them is relitigated |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The package layout, the Node to browser bridge, one command end to end, serve mode, and the eight layering rules |
+| [CLI.md](docs/CLI.md) | Every command, flag, `--json` shape and exit code. The contract other tools parse |
+| [HELPERS.md](docs/HELPERS.md) | The `helpers` bag a snippet can call, and what each of the nine lint rules fires on |
+| [ROADMAP.md](docs/ROADMAP.md) | Seven phases with checklists, the five that are done, and the gaps still known and open |
+| [PRIOR-ART.md](docs/PRIOR-ART.md) | What tldraw actually supports, the tools that already exist, and what was checked and ruled out, with a source per claim |
+
+[AGENTS.md](AGENTS.md) is the operating manual for working in this repo.
 
 ## Licence
 
