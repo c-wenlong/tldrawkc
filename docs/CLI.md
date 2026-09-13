@@ -32,9 +32,31 @@ Global options:
 | `--allow-lints` | off | Turn exit code 3 into 0. Applies to `run`, `from-mermaid` and `inspect`. It is blunt: every remaining error-level finding is accepted, and the tool checks nothing about why. A finding you actually mean to keep is better muted per shape with `meta.lintIgnore`, which drops it from the list rather than from the exit code. |
 | `--chromium <path>` | auto | Executable to use. Otherwise `TLDRAWKC_CHROMIUM`, then Playwright's registry, then the Chrome and Chromium apps installed on the machine. |
 | `--timeout <ms>` | 30000 | Cap on the `exec` step. |
-| `--page <name>` | first page | Operate on a named page. Applies to `run`, `shot`, `inspect`, `export`. |
+| `--page <name>` | first page | Operate on a named page. Applies to `run`, `shot`, `inspect`, `export` and `from-mermaid`. A name no page has is exit 1, and the error names the pages there are. |
 | `--padding <px>` | 32 | Export padding around the shapes. Applies to `run`, `shot`, `export`. |
 | `--pixel-ratio <n>` | 2 | Export resolution multiplier for PNG. Applies to `run`, `shot`, `export`. |
+
+### Pages
+
+Most documents have one page and `--page` never comes up. On one that has
+several, three things hold, and all three are asserted in
+`test/e2e/cli-pages.test.ts`.
+
+- **Every command opens on the first page.** A `.tldr` is read back
+  document-scope only, so the page a previous `run` finished on is not carried
+  in the file. The page **order** is. `--page` is how to say otherwise, and a
+  name no page has is a usage error with the page list in it.
+- **A page is the unit `--page` scopes.** `inspect` reports that page's shapes,
+  `shot` and `export` frame it, and `run` draws on it and leaves the others
+  untouched.
+- **Lints are collected from the current page only.** So a finding on page two
+  never shows up in page one's `inspect`, `--allow-lints` turns that page's
+  exit 3 into 0 the same way it would on a one-page document, and a
+  `meta.lintIgnore` on a shape there mutes its rule there. A `run` that ends on
+  page two is linted against page two, whichever page it started on.
+
+`helpers.page(name)` is how a snippet adds one. See
+[HELPERS.md](HELPERS.md#helperspagename).
 
 ## Commands
 
