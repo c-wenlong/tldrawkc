@@ -365,7 +365,7 @@ alongside document metadata, and `missing-glyph` added in phase 4.
 | `overlapping-shapes` | Two geo shapes intersect by more than 10 percent of the smaller one's area. Shapes with `meta.container = true` (from `boxShapes`) are skipped on both sides of the pair. |
 | `off-page` | A shape sits further than `OFF_PAGE_LIMIT` (10000 page units) from the origin in any direction, positive or negative |
 | `empty-label` | A geo shape has no text and no fill and is not a container, so it renders as an unexplained outline |
-| `unreadable-label` | The widest unbreakable run of a label is wider than the room the shape gives it |
+| `unreadable-label` | The widest unbreakable run of a label is wider than the shape, or the widest line it renders as is wider than the outline leaves room for across the rows that line sits on |
 | `missing-glyph` | A label's font has no glyph for a character in it, so the reader's machine picks the typeface. `draw` (Shantell Sans) and `mono` have no `θ λ α β σ μ`, though `π` is there; no bundled font has `⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇`. A warning, like `missing-topic` |
 | `missing-topic` | The document names no topic, so a catalog cannot file it |
 
@@ -417,16 +417,51 @@ box then renders 26 px tall and unreadable. That measurement is where the
 limit of 10000 comes from, and it is why the rule fires in every direction
 rather than only at negative coordinates.
 
-`unreadable-label` cannot be a width comparison. tldraw's label CSS is
+`unreadable-label` is two checks under one name, because to a reader they are
+the same complaint: the shape cannot hold its label.
+
+The first cannot be a width comparison. tldraw's label CSS is
 `overflow-wrap: break-word`, so a long word is broken mid-word into stacked
 fragments instead of spilling out, and a naive check never fires. The rule
 measures with tldraw's own measurer,
 `editor.textMeasure.measureText(text, { ..., measureScrollWidth: true,
 disableOverflowWrapBreaking: true })`, whose `scrollWidth` reports the widest
 run that cannot be broken, and compares it against the shape's own unrotated
-width rather than its page box, which a rotation inflates. Shapes whose label
-can never overflow are exempt: a note, which has no `w` or `h` and shrinks its
-font instead, and an auto-sized `text` shape, which grows.
+width rather than its page box, which a rotation inflates.
+
+The second is about the outline, and the first is blind to it. The box a
+label wraps inside is the shape's bounding box, and a diamond is only that wide
+along one line through its middle, so a label can wrap politely, break nothing,
+and still run out through both slanted edges. So the rule asks the rendered
+outline instead: it intersects the polygon `getShapeGeometry` reports with the
+rows the text occupies, takes the narrowest horizontal run across them, and
+compares that against the widest line the label actually renders as. A
+rectangle's outline gives the label every unit of its width and reports no
+usable width at all, which is why this check is purely additive and cannot
+change what the rule says about a plain box. `triangle`, `star`, `hexagon`,
+`cloud`, `heart` and the two round geos pinch to the degree their outlines do.
+
+That widest rendered line needs its own measurement, and `measureText` cannot
+supply it: its element carries a `max-width`, so CSS shrink-to-fit reports the
+smaller of the text's one-line width and that maximum, and a label that wraps at
+all comes back as exactly the width it was allowed rather than the width it
+used. `measureTextSpans` lays the text out and returns a box per run of
+characters, which grouped by top edge gives the real lines. It runs only on a
+shape whose outline pinches, since it is the most expensive measurement in the
+pass and on a box it can say nothing new.
+
+The slack on the outline check is 16 page units, tldraw's own label padding and
+about half a character at the default label size, against 1 on the width check.
+Both sides of that comparison approximate the picture: a curve arrives as a
+sampled polygon whose chords lie inside it, and the band is taken across the
+whole block of text where the top and bottom rows hold only ascenders and
+descenders. Measured against the fixtures, a label that visibly crosses an
+outline overshot by 34, 43 and 58 units, and one that merely touches an ellipse
+overshot by 5.
+
+Shapes whose label can never overflow are exempt from both: a note, which has no
+`w` or `h` and shrinks its font instead, and an auto-sized `text` shape, which
+grows.
 
 `overlapping-shapes` and `overlapping-text` both respect rotation.
 `overlapping-shapes` compares page bounds, which tldraw already computes as

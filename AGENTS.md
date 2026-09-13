@@ -607,6 +607,24 @@ Collected as they are found, so they are not rediscovered.
   `editor.textMeasure.measureText(text, { ..., maxWidth: innerWidth, measureScrollWidth: true, disableOverflowWrapBreaking: true })`,
   whose `scrollWidth` reports the widest unbreakable run. That is what
   `unreadable-label` compares against the shape width.
+- **`measureText`'s `w` is the width the text was allowed, not the width it
+  used.** The measurement element is a `div` carrying a `max-width`, so CSS
+  shrink-to-fit gives `min(one-line width, max-width)`: any label that wraps at
+  all comes back as exactly `maxWidth`. Fine for the question that measurement
+  asks, and wrong for "how far across the shape does the longest line reach",
+  which is the second half of `unreadable-label`. `measureTextSpans` is the one
+  that answers it: it lays the text out and returns a box per run of characters,
+  and grouping those by their top edge rebuilds the real lines. It is also the
+  most expensive measurement in the lint pass, a `Range` per grapheme, so
+  `read.ts` only reaches for it on a shape whose outline actually pinches.
+- **A label can cross a diamond's edges without ever crossing its box.** The
+  box a geo label wraps inside is the bounding box, whatever the outline does,
+  so `unreadable-label` has a second check that intersects the outline polygon
+  with the rows the text occupies and takes the narrowest run across them. The
+  band is the label rectangle less `LABEL_PADDING`, because those rows are
+  whitespace and a corner eating into them is not visible. Demanding the padding
+  against a slanted edge as well was measured too strict, on `signal` in a
+  triangle 220 by 150, which sits plainly inside its outline.
 - **The label metrics are `@internal`.** `LABEL_FONT_SIZES`,
   `ARROW_LABEL_FONT_SIZES`, `LABEL_PADDING`, `ARROW_LABEL_PADDING` and
   `TEXT_PROPS` live in

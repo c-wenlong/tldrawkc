@@ -122,6 +122,31 @@ export interface LintShape {
    */
   shapeWidth?: number;
   /**
+   * The widest line the label actually renders as, with no padding, in the
+   * shape's own coordinate space.
+   *
+   * A different question from `labelWidth`, and the pair is what lets one rule
+   * catch two failures. `labelWidth` is the widest run that cannot be broken,
+   * which is what tells you a word is about to be chopped in half. This is what
+   * the reader sees: the longest of the lines the label wraps into. Set
+   * alongside `usableWidth`, and only on a shape whose outline pinches, since
+   * on a plain box it can never reach the edge.
+   */
+  labelInkWidth?: number;
+  /**
+   * How much room the outline leaves that ink: the narrowest horizontal run
+   * inside the rendered outline across the rows the label's text occupies, in
+   * the shape's own coordinate space.
+   *
+   * `shapeWidth` is the bounding box, and a diamond is only that wide along one
+   * line through its middle, so a label that fits the box can still cross both
+   * slanted edges. `triangle`, `star`, `hexagon`, `cloud` and the two round
+   * geos pinch in lesser degree. Absent means the outline gives the label its
+   * full width, which is the case for a rectangle and is why the rule's
+   * behaviour there is unchanged. See {@link usableWidthAtBand}.
+   */
+  usableWidth?: number;
+  /**
    * True when the shape resizes itself to whatever its text needs, so a label
    * can never overflow it: an auto-sized `text` shape, or a note, which shrinks
    * its font instead. Those are exempt from `unreadable-label`.
@@ -198,6 +223,103 @@ export const ARROW_CROSSING_TOLERANCE = 4;
 
 /** Slack on `unreadable-label`, in page units, to absorb sub-pixel measurement. */
 const LABEL_WIDTH_TOLERANCE = 1;
+
+/**
+ * Slack on the outline half of `unreadable-label`, in page units.
+ *
+ * Sixteen rather than one, because that comparison is between a measured run
+ * of text and a polygon, and both are approximations of the picture. tldraw
+ * hands back a curve as a sampled polygon whose chords lie inside the real
+ * outline; the band is taken across the whole block of text, where the top and
+ * bottom rows hold only ascenders and descenders; and a letter that touches the
+ * outline still reads perfectly well, which is not what this rule is for.
+ *
+ * Measured against the fixtures rather than picked: a label that visibly
+ * crosses an outline overshot by 34, 43 and 58 units, and the one that merely
+ * kisses an ellipse overshot by 5. Sixteen sits in that gap with room either
+ * side, and is tldraw's own label padding, so it is about half a character at
+ * the default label size.
+ */
+const OUTLINE_WIDTH_TOLERANCE = 16;
+
+/**
+ * How far apart the rows are when measuring how much room a label band has, in
+ * page units.
+ *
+ * For a convex outline the narrowest run is always at one end of the band, so
+ * two rows would do. Sampling exists for `star`, `cloud` and `heart`, whose
+ * waists can sit anywhere inside it. Eight units is about a quarter of a line
+ * of text at the default size, which is finer than the feature a notch has to
+ * have before a reader sees the label cross it.
+ */
+const BAND_SAMPLE_STEP = 8;
+
+/** Ceiling on the rows one band contributes, for a label taller than any page. */
+const MAX_BAND_SAMPLES = 64;
+
+/**
+ * The widest horizontal run inside `polygon` at height `y`, in the polygon's
+ * own coordinate space, or zero when the line misses it.
+ *
+ * Every edge that straddles the line contributes a crossing; sorted and taken
+ * in pairs those are the spans inside, by the even-odd rule, and the widest of
+ * them is the one a centred label sits in. A concave outline can hand back
+ * several, which is the whole reason this is not `maxX - minX`.
+ *
+ * Half-open on purpose (`a.y > y` against `b.y > y`), so a vertex exactly on
+ * the line is counted once rather than twice, and an edge lying along the line
+ * contributes nothing.
+ */
+export function chordWidthAt(polygon: readonly Point[], y: number): number {
+  const crossings: number[] = [];
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    if (!a || !b) continue;
+    if (a.y > y === b.y > y) continue;
+    crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
+  }
+  if (crossings.length < 2) return 0;
+  crossings.sort((p, q) => p - q);
+  let widest = 0;
+  for (let i = 0; i + 1 < crossings.length; i += 2) {
+    const from = crossings[i];
+    const to = crossings[i + 1];
+    if (from === undefined || to === undefined) continue;
+    widest = Math.max(widest, to - from);
+  }
+  return widest;
+}
+
+/**
+ * The narrowest room the outline gives a label whose text runs from `top` to
+ * `bottom`, in the polygon's own coordinate space.
+ *
+ * This is the number `unreadable-label` needs and the bounding box cannot
+ * give: a diamond 220 wide is 220 wide only along one line through its middle,
+ * and a two-line label reaching 30 units either side of that line has about
+ * 118. The band is walked rather than measured at its two edges, because
+ * `star`, `cloud` and `heart` can pinch in the middle of it; see
+ * {@link BAND_SAMPLE_STEP}. A band with no height, which is a shape too small
+ * to hold its own label padding, is read as the single row through its centre.
+ */
+export function usableWidthAtBand(
+  polygon: readonly Point[],
+  top: number,
+  bottom: number,
+): number {
+  if (polygon.length < 3) return 0;
+  const from = Math.min(top, bottom);
+  const to = Math.max(top, bottom);
+  const height = to - from;
+  if (!(height > 0)) return chordWidthAt(polygon, from);
+  const steps = Math.min(MAX_BAND_SAMPLES, Math.max(1, Math.ceil(height / BAND_SAMPLE_STEP)));
+  let narrowest = Infinity;
+  for (let i = 0; i <= steps; i++) {
+    narrowest = Math.min(narrowest, chordWidthAt(polygon, from + (height * i) / steps));
+  }
+  return narrowest;
+}
 
 /**
  * Is this rule muted on this shape?
@@ -809,31 +931,61 @@ export function emptyLabels(shapes: readonly LintShape[]): Lint[] {
 }
 
 /**
- * `unreadable-label`: a label wider than the shape holding it.
+ * `unreadable-label`: a label the shape cannot hold.
  *
- * tldraw wraps a geo label and grows the shape's height to suit, but it never
- * grows the width, so a word longer than the box spills over the outline or
- * gets clipped. `labelWidth` is the browser's own measurement of what the
- * label needs at that width with overflow allowed, which is why this rule
- * cannot be computed from the records alone. Shapes that resize themselves to
- * their text (`growsToFit`) are exempt.
+ * Two ways that happens, and one rule, because to a reader they are the same
+ * complaint. Shapes that resize themselves to their text (`growsToFit`) are
+ * exempt from both.
+ *
+ * **A word wider than the box.** tldraw wraps a geo label and grows the shape's
+ * height to suit, but it never grows the width, so a word longer than the box
+ * is chopped in half and stacked. `labelWidth` is the browser's own measurement
+ * of the widest run that cannot be broken, which is why this rule cannot be
+ * computed from the records alone, and it goes against the shape's own width.
+ *
+ * **Text that crosses the outline.** The first check is blind to it, because
+ * the box a diamond's label wraps inside is the diamond's bounding box and the
+ * diamond is only that wide along one line through its middle. So a label can
+ * wrap politely, break nothing, and still run out through both slanted edges.
+ * `labelInkWidth` is the widest line as rendered and `usableWidth` is the room
+ * the outline leaves across the rows it occupies; a rectangle reports no
+ * `usableWidth` at all, so this check is purely additive and nothing that
+ * passed before can start failing on a plain box.
+ *
+ * `shapeWidth` falls back to `bounds.w` when nobody measured it, so a rotated
+ * shape is still judged on the room its label has rather than on the page box a
+ * rotation inflates.
  */
 export function unreadableLabels(shapes: readonly LintShape[]): Lint[] {
   const lints: Lint[] = [];
   for (const shape of shapes) {
-    const labelWidth = shape.labelWidth;
-    // The shape's own width, so a rotated shape is judged on the room its
-    // label actually has rather than on the page box a rotation inflates.
-    const width = shape.shapeWidth ?? shape.bounds?.w;
-    if (width === undefined || labelWidth === undefined) continue;
     if (shape.growsToFit === true) continue;
     if (isLintIgnored(shape, "unreadable-label")) continue;
     if ((shape.text ?? "").trim().length === 0) continue;
-    if (labelWidth <= width + LABEL_WIDTH_TOLERANCE) continue;
+
+    const shapeWidth = shape.shapeWidth ?? shape.bounds?.w;
+    const labelWidth = shape.labelWidth;
+    if (
+      shapeWidth !== undefined &&
+      labelWidth !== undefined &&
+      labelWidth > shapeWidth + LABEL_WIDTH_TOLERANCE
+    ) {
+      lints.push({
+        rule: "unreadable-label",
+        shapeIds: [shape.id],
+        message: `${shape.id}'s label needs ${Math.round(labelWidth)} units but the shape is only ${Math.round(shapeWidth)} wide, so the text spills out of it`,
+      });
+      continue;
+    }
+
+    const inkWidth = shape.labelInkWidth;
+    const usable = shape.usableWidth;
+    if (inkWidth === undefined || usable === undefined) continue;
+    if (inkWidth <= usable + OUTLINE_WIDTH_TOLERANCE) continue;
     lints.push({
       rule: "unreadable-label",
       shapeIds: [shape.id],
-      message: `${shape.id}'s label needs ${Math.round(labelWidth)} units but the shape is only ${Math.round(width)} wide, so the text spills out of it`,
+      message: `${shape.id}'s label draws a line ${Math.round(inkWidth)} units wide, but its ${shape.geo ?? "outline"} is only ${Math.round(usable)} wide across the rows that line sits on, so the text runs out through the outline`,
     });
   }
   return lints;

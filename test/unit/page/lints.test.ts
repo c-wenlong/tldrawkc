@@ -36,6 +36,8 @@ import {
   segmentCrossesRect,
   segmentReachesInside,
   severityOf,
+  chordWidthAt,
+  usableWidthAtBand,
   unreadableLabels,
   type LintBinding,
   type LintShape,
@@ -932,6 +934,169 @@ describe("unreadable-label", () => {
       }),
     ];
     expect(unreadableLabels(shapes)).toEqual([]);
+  });
+});
+
+/**
+ * The half of `unreadable-label` that reads the outline.
+ *
+ * The numbers are the ones measured off the canvas rather than invented: a
+ * diamond 220 by 130 holding a two-line label gives it 118 units across the
+ * rows the text sits on, and that label draws a line 176 wide.
+ */
+describe("unreadable-label against the outline", () => {
+  const diamond = (id: string, extra: Partial<LintShape> = {}): LintShape =>
+    geo("shape:" + id, { x: 0, y: 0, w: 220, h: 130 }, {
+      geo: "diamond",
+      shapeWidth: 220,
+      labelWidth: 220,
+      usableWidth: 118,
+      labelInkWidth: 176,
+      ...extra,
+    });
+
+  it("flags a diamond whose label runs out through the slanted edges", () => {
+    const lints = unreadableLabels([diamond("dia")]);
+    expect(lints).toHaveLength(1);
+    expect(lints[0]?.rule).toBe("unreadable-label");
+    expect(lints[0]?.shapeIds).toEqual(["shape:dia"]);
+    expect(lints[0]?.message).toContain("176");
+    expect(lints[0]?.message).toContain("118");
+    expect(lints[0]?.message).toContain("diamond");
+  });
+
+  it("says nothing about the same label in a box of the same size", () => {
+    // The rectangle reports no usableWidth at all, because its outline gives
+    // the label every unit of its width. That is what keeps this check from
+    // ever changing what the rule says about a plain box.
+    const rectangle = geo("shape:rect", { x: 0, y: 0, w: 220, h: 130 }, {
+      shapeWidth: 220,
+      labelWidth: 220,
+    });
+    expect(unreadableLabels([rectangle])).toEqual([]);
+  });
+
+  it("says nothing about a short label in the same diamond", () => {
+    // "yes" in a diamond 220 wide: one line 39 units of ink, and the shorter
+    // label sits in a shallower band, so the outline gives it 169.
+    expect(
+      unreadableLabels([diamond("short", { labelWidth: 92, usableWidth: 169, labelInkWidth: 39 })]),
+    ).toEqual([]);
+  });
+
+  it("tolerates a label that reaches an ellipse's curve without crossing it", () => {
+    // Measured, not invented: `Ellipse shaped label` in an ellipse 212 wide
+    // draws a line of 165 where the sampled outline reports 160, and the
+    // rendered picture shows the letters touching the curve and no more.
+    const ellipse = geo("shape:ell", { x: 0, y: 0, w: 212, h: 130 }, {
+      geo: "ellipse",
+      shapeWidth: 212,
+      labelWidth: 212,
+      usableWidth: 160,
+      labelInkWidth: 165,
+    });
+    expect(unreadableLabels([ellipse])).toEqual([]);
+  });
+
+  it("flags an ellipse whose label does cross the curve", () => {
+    const ellipse = geo("shape:ell", { x: 0, y: 0, w: 212, h: 130 }, {
+      geo: "ellipse",
+      shapeWidth: 212,
+      labelWidth: 212,
+      usableWidth: 120,
+      labelInkWidth: 190,
+    });
+    expect(unreadableLabels([ellipse]).map((lint) => lint.rule)).toEqual(["unreadable-label"]);
+  });
+
+  it("respects lintIgnore", () => {
+    expect(unreadableLabels([diamond("dia", { meta: { lintIgnore: ["unreadable-label"] } })])).toEqual(
+      [],
+    );
+  });
+
+  it("exempts a shape that grows to fit its text", () => {
+    expect(unreadableLabels([diamond("dia", { growsToFit: true })])).toEqual([]);
+  });
+
+  it("says nothing when nobody measured the outline", () => {
+    expect(
+      unreadableLabels([diamond("dia", { usableWidth: undefined, labelInkWidth: undefined })]),
+    ).toEqual([]);
+  });
+
+  it("reports the box reason once, not both reasons, when the word is too wide too", () => {
+    // A word wider than the bounding box is already the plainest thing to say
+    // about the shape, so the outline reason does not pile on behind it.
+    const lints = unreadableLabels([diamond("dia", { labelWidth: 400 })]);
+    expect(lints).toHaveLength(1);
+    expect(lints[0]?.message).toContain("spills out of it");
+  });
+});
+
+describe("the room an outline leaves a label", () => {
+  const square = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+  // Points at the middle of the left and right edges, 100 across, 60 tall.
+  const rhombus = [
+    { x: 50, y: 0 },
+    { x: 100, y: 30 },
+    { x: 50, y: 60 },
+    { x: 0, y: 30 },
+  ];
+  // Two 20-wide legs with a 20-wide gap between them, so one row holds two runs.
+  const forked = [
+    { x: 0, y: 0 },
+    { x: 60, y: 0 },
+    { x: 60, y: 40 },
+    { x: 40, y: 40 },
+    { x: 40, y: 20 },
+    { x: 20, y: 20 },
+    { x: 20, y: 40 },
+    { x: 0, y: 40 },
+  ];
+
+  it("gives a rectangle its own width at every row", () => {
+    expect(chordWidthAt(square, 1)).toBe(100);
+    expect(chordWidthAt(square, 50)).toBe(100);
+    expect(chordWidthAt(square, 99)).toBe(100);
+    expect(usableWidthAtBand(square, 20, 80)).toBe(100);
+  });
+
+  it("narrows with the height on a diamond", () => {
+    expect(chordWidthAt(rhombus, 30)).toBe(100);
+    expect(chordWidthAt(rhombus, 15)).toBe(50);
+    // A band either side of the middle is judged on its narrowest row, which
+    // for a convex outline is one of its two edges.
+    expect(usableWidthAtBand(rhombus, 15, 45)).toBe(50);
+    expect(usableWidthAtBand(rhombus, 25, 35)).toBeCloseTo(250 / 3, 5);
+  });
+
+  it("reads a band with no height as the single row through it", () => {
+    expect(usableWidthAtBand(rhombus, 30, 30)).toBe(100);
+  });
+
+  it("takes the widest run when a row holds several", () => {
+    // At y = 30 the fork is two legs of 20 with a gap; at y = 10 it is solid.
+    expect(chordWidthAt(forked, 30)).toBe(20);
+    expect(chordWidthAt(forked, 10)).toBe(60);
+    // And a band spanning both is judged on the pinched part, which is the
+    // reason this walks the band rather than measuring its two edges.
+    expect(usableWidthAtBand(forked, 5, 35)).toBe(20);
+  });
+
+  it("answers zero for a row that misses the outline, and for a degenerate polygon", () => {
+    expect(chordWidthAt(square, -5)).toBe(0);
+    expect(chordWidthAt(square, 200)).toBe(0);
+    expect(usableWidthAtBand([{ x: 0, y: 0 }, { x: 1, y: 1 }], 0, 1)).toBe(0);
+  });
+
+  it("ignores a repeated closing vertex, which is how tldraw reports an outline", () => {
+    expect(chordWidthAt([...square, { x: 0, y: 0 }], 50)).toBe(100);
   });
 });
 
