@@ -228,7 +228,8 @@ on one line, which the Read tool refuses on token count, so opening one was not
 a step that existed.
 
 Nothing is written except the PNG. The SVG is never touched, and neither is the
-`.tldr` behind it.
+`.tldr` behind it: an `-o` that names the file being verified is refused before
+anything runs, the same way every exporting verb refuses one.
 
 | Option | What |
 | --- | --- |

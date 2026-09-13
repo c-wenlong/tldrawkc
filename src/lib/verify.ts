@@ -38,7 +38,7 @@ import {
 } from "./paths.js";
 import { EnvironmentError, UsageError } from "./errors.js";
 import { withRasterPage } from "./browser.js";
-import { exportCanvas } from "./canvas.js";
+import { exportCanvas, refuseSelfOverwrite } from "./canvas.js";
 
 /**
  * The raster's width in pixels unless `--width` says otherwise.
@@ -552,6 +552,16 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
     throw new UsageError(`--width expects a number of pixels of at least 1, got "${String(width)}".`);
   }
 
+  // Before the browser, and before the `.tldr` form exports anything: `-o` is
+  // a PNG path and nothing else stops it naming the file being verified, so
+  // `verify diagram.tldr -o diagram.tldr` would replace the only editable copy
+  // of the drawing with a picture of it. The same guard every exporting verb
+  // runs, for the same reason.
+  const output = options.output === undefined
+    ? tempVerifyPngPath(named)
+    : resolveOutputPath(options.output, options.cwd);
+  refuseSelfOverwrite(named, [output]);
+
   const dir = tempVerifyDir();
   try {
     const fromDocument = named.toLowerCase().endsWith(".tldr");
@@ -573,10 +583,6 @@ export async function verify(options: VerifyOptions): Promise<VerifyResult> {
     if (svg === null) throw new UsageError(`${file} does not exist.`);
     if (svg.trim() === "") throw new UsageError(`${file} is empty.`);
     if (!svg.includes("<svg")) throw new UsageError(`${file} has no <svg> element in it.`);
-
-    const output = options.output === undefined
-      ? tempVerifyPngPath(named)
-      : resolveOutputPath(options.output, options.cwd);
 
     await writeText(verifyHarnessPath(dir), buildHarness(svg));
 

@@ -436,8 +436,13 @@ export interface ExportResult {
  * copy, so that is unrecoverable, and one mistyped path is all it takes. Every
  * verb that writes an export calls this before it launches a browser, so the
  * answer arrives as a usage error rather than as a half-destroyed file.
+ *
+ * Exported because `verify` is outside this module and writes a file too: its
+ * `-o` is a PNG path like any other, and `verify diagram.tldr -o diagram.tldr`
+ * is the same unrecoverable mistake one verb further along. A second copy of
+ * the rule would be a second copy to forget.
  */
-function refuseSelfOverwrite(file: string, targets: ReadonlyArray<string | undefined>): void {
+export function refuseSelfOverwrite(file: string, targets: ReadonlyArray<string | undefined>): void {
   for (const target of targets) {
     if (target !== undefined && isSamePath(target, file)) {
       throw new UsageError(

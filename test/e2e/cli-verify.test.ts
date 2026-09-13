@@ -240,6 +240,23 @@ describe("verify", () => {
     expect(result.stderr).toContain("could not be rendered");
   });
 
+  it("refuses to write the PNG over the file it is verifying", async () => {
+    const svg = await exportFixture();
+    const onto = await cli(["verify", svg, "-o", svg]);
+    expect(onto.code).toBe(1);
+    expect(onto.stderr).toContain("refusing to write an export over the document itself");
+    // Still the SVG it was, not PNG bytes under an .svg name.
+    expect(await fs.readFile(svg, "utf8")).toContain("<svg");
+
+    // And the `.tldr` form is refused before it exports anything, which is the
+    // one that would cost the only editable copy of the drawing.
+    const document = path.join(dir, "map.tldr");
+    const before = await fs.readFile(document, "utf8");
+    const overDocument = await cli(["verify", "map.tldr", "-o", "map.tldr"]);
+    expect(overDocument.code).toBe(1);
+    expect(await fs.readFile(document, "utf8")).toBe(before);
+  });
+
   it("exits 1 on a missing file and on one that is not an SVG", async () => {
     const missing = await cli(["verify", "nope.svg"]);
     expect(missing.code).toBe(1);
