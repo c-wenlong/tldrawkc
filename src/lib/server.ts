@@ -394,7 +394,16 @@ async function putDocument(
   const limit = api.maxBodyBytes ?? MAX_DOCUMENT_BYTES;
   const body = await readBody(request, limit);
   if (!body.ok) {
-    endJson(response, 413, { error: `body is larger than ${String(limit)} bytes` });
+    // `Connection: close` is what ends the drain: the rest of the body is
+    // discarded as it arrives and Node drops the socket once this response has
+    // flushed, so an oversized upload cannot be read forever and the client
+    // still gets to read the 413 it is being refused with.
+    endJson(
+      response,
+      413,
+      { error: `body is larger than ${String(limit)} bytes` },
+      { Connection: "close" },
+    );
     return;
   }
 
@@ -429,10 +438,11 @@ type BodyResult = { ok: true; text: string } | { ok: false };
  * Read a request body, refusing one over `limit`.
  *
  * `Content-Length` is checked first so an oversized upload is refused before a
- * byte of it is buffered, and the request is then drained rather than
- * destroyed: a client still writing its body has to be able to read the 413
- * that is coming back. A chunked body has no length to check, so it is counted
- * as it arrives and the socket is dropped once it goes over.
+ * byte of it is buffered. A chunked body declares no length, so it is counted
+ * as it arrives instead. Either way what is already buffered is dropped and
+ * the rest is drained rather than the socket being destroyed: a client still
+ * writing its body has to be able to read the 413 coming back, and destroying
+ * the request destroys the response with it.
  */
 function readBody(request: http.IncomingMessage, limit: number): Promise<BodyResult> {
   const declared = Number(request.headers["content-length"]);
@@ -447,8 +457,9 @@ function readBody(request: http.IncomingMessage, limit: number): Promise<BodyRes
     request.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > limit) {
+        chunks.length = 0;
+        request.resume();
         resolve({ ok: false });
-        request.destroy();
         return;
       }
       chunks.push(chunk);
