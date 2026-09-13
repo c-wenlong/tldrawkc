@@ -13,7 +13,7 @@
  * hole in the docs even if the behaviour exists.
  */
 
-import type { Editor, TLShape, TLShapeId } from "tldraw";
+import type { Editor, TLPageId, TLShape, TLShapeId } from "tldraw";
 
 import {
   clearPage,
@@ -21,6 +21,7 @@ import {
   makeNote,
   makeText,
   removeShapes,
+  selectOrCreatePage,
   type BoxOptions,
   type ClearOptions,
   type NoteOptions,
@@ -96,6 +97,7 @@ export interface Helpers {
   note(key: ShapeKey, str: string, opts?: NoteOptions): TLShapeId;
   remove(keys: ShapeKey | readonly ShapeKey[]): number;
   clear(opts?: ClearOptions): number;
+  page(name: string): TLPageId;
   connect(from: ShapeKey, to: ShapeKey, opts?: ConnectOptions): TLShapeId;
   attribute(
     owner: ShapeKey,
@@ -153,11 +155,13 @@ export interface HelpersHandle {
  * `function name(` line for the `api` command to find.
  */
 export function createHelpers(editor: Editor): HelpersHandle {
-  // Which pages held nothing when the snippet started, by page id. One boolean
-  // was not enough: a snippet that starts on an empty page can call
+  // How many shapes each page held when the snippet started, by page id. One
+  // boolean was not enough: a snippet that starts on an empty page can call
   // `editor.setCurrentPage` and then `clear()` on a page full of someone
-  // else's work, and the single flag would have said yes.
-  let emptyAtStart = new Set<string>();
+  // else's work, and the single flag would have said yes. A page this snippet
+  // made is simply absent from the map, which reads as zero, because a page
+  // that did not exist when `exec` started is as owned as a page can get.
+  let heldAtStart = new Map<string, number>();
 
   /**
    * Create or update a labelled geo shape and return its id.
@@ -235,13 +239,29 @@ export function createHelpers(editor: Editor): HelpersHandle {
    * Created means this page held zero shapes when `exec` started, recorded per
    * page rather than once: a snippet that drew the whole picture may wipe it
    * and start again, a snippet handed someone else's diagram may not, and
-   * switching pages mid-snippet must not launder the difference.
+   * switching pages mid-snippet must not launder the difference. A page this
+   * snippet added with `page()` counts as its own and needs no `force`.
    *
    * @example
    * helpers.clear({ force: true })
    */
   function clear(opts: ClearOptions = {}): number {
-    return clearPage(editor, opts, emptyAtStart.has(editor.getCurrentPageId()));
+    return clearPage(editor, opts, heldAtStart.get(editor.getCurrentPageId()) ?? 0);
+  }
+
+  /**
+   * Switch to a page by name, adding it when the document has none, and return
+   * its id. Everything drawn afterwards lands there.
+   *
+   * Select-or-create rather than create, so re-running a snippet draws over the
+   * page it made last time instead of stacking `details (1)` beside it. Pass the
+   * same name to `--page` to screenshot, inspect or export that page later.
+   *
+   * @example
+   * helpers.page('details')
+   */
+  function page(name: string): TLPageId {
+    return selectOrCreatePage(editor, name);
   }
 
   /**
@@ -540,6 +560,7 @@ export function createHelpers(editor: Editor): HelpersHandle {
     note,
     remove,
     clear,
+    page,
     connect,
     attribute,
     line,
@@ -561,11 +582,12 @@ export function createHelpers(editor: Editor): HelpersHandle {
   return {
     helpers,
     beginExec: () => {
-      emptyAtStart = new Set(
-        editor
-          .getPages()
-          .filter((page) => editor.getSortedChildIdsForParent(page.id).length === 0)
-          .map((page) => page.id),
+      // `getPageShapeIds` rather than the page's direct children, because a
+      // frame's contents are shapes on that page too and the count is quoted
+      // back in the refusal: a page holding one frame and six boxes reported
+      // as holding one shape would be the same lie in a different place.
+      heldAtStart = new Map(
+        editor.getPages().map((each) => [each.id, editor.getPageShapeIds(each).size] as const),
       );
     },
   };

@@ -730,6 +730,27 @@ Collected as they are found, so they are not rediscovered.
   adding `session` replaces all three with whoever wrote the file. Mirror mode
   passes `document` alone for exactly that reason, and calls `zoomToFit()`
   once, on the first load only.
+- **`editor.createPage` returns the editor, and renames a name it already
+  has.** It is chainable (`createPage(page): this`), so the new page's id is
+  not the return value, and returning it out of a snippet is a circular
+  structure the bridge cannot serialise. It also "creates a page whilst
+  ensuring that the page name is unique", so a second `createPage({ name:
+  'details' })` leaves a page called `details (1)` rather than doing nothing.
+  `selectOrCreatePage` in `helpers/shapes.ts` therefore looks the name up
+  first and, when it does create, reads the id back by diffing the page list.
+  A document is capped at `editor.options.maxPages`, 40 as of tldraw 5.4.2.
+- **A `.tldr` does not carry which page was current.** `load` reads the file
+  through `getStoreSnapshot("document")` and `loadSnapshot` is handed the
+  document scope alone, so the current page comes from the fresh mount and is
+  always the first one. The page *order* does survive, because `page` records
+  are document-scoped. That is why every verb opens on page one and `--page`
+  exists, and it is the same fact the mirror relies on when it passes
+  `document` alone to keep the viewer's camera.
+- **Everything page-scoped reads `getCurrentPageShapes`.** `lintPage`,
+  `describeEditor` and the shot and SVG exports all frame the current page, so
+  a finding on page two is invisible from page one and a `run` that ends on
+  page two is linted against page two. Nothing has to filter by page id; the
+  scoping is already there, and `test/e2e/cli-pages.test.ts` pins it.
 - **tldraw's own UI does not bind Cmd+S.** The `save-file-copy` action lives
   in the tldraw.com app, not in the library, so mirror mode's handler has
   nothing to fight. It still listens on `window` in the capture phase and

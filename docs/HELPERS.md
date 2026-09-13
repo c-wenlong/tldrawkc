@@ -86,17 +86,44 @@ unless the current page held nothing when this `exec` started, or it is called
 as `helpers.clear({ force: true })`.
 
 That is what "the snippet did not create the document" had to become in
-practice. The bridge records which pages were empty in `beginExec()`, once,
-before the snippet runs, so the permission is per page and per `exec`: a
+practice. The bridge records how many shapes each page held in `beginExec()`,
+once, before the snippet runs, so the permission is per page and per `exec`: a
 snippet that draws a page and then clears it to start over still passes,
 because the check reads the state at the start rather than the state now, and
 `editor.setCurrentPage` onto a page full of someone else's work does not
 inherit the permission from the page the snippet did create.
 
+A page the snippet itself added is not in that record at all, which reads as
+zero and is correct: a page that did not exist when `exec` started is as owned
+as a page can get. It used to be read as "not permitted", so `helpers.page(...)`
+followed by `clear()` was refused with a message that also misquoted the count,
+saying the page "already held 1 shape(s) when the snippet started" about a page
+that had not existed. The refusal now quotes the count it actually checked.
+
 Commands are stateless (D2), so the permission does not survive one. A second
 `run` against a saved document loads a page with shapes on it, that page was
 not empty when its `exec` started, and `clear()` is refused. Wiping a document
 a previous command wrote needs `{ force: true }`, which is the point.
+
+### `helpers.page(name)`
+
+Switch to the page with that name, adding it when the document has none, and
+return its id. Everything drawn after the call lands there, and the same name
+is what `--page` takes on `run`, `shot`, `inspect`, `export` and
+`from-mermaid`.
+
+Select-or-create rather than create, because `editor.createPage` uniquifies a
+name it has seen before: creating `details` twice leaves a second page called
+`details (1)`, so a snippet re-run against its own document would stack a new
+page on every pass. For the same reason the id is read back by diffing the page
+list rather than by looking the name up again.
+
+Two things follow from how a `.tldr` is loaded. The page **order** survives a
+save and a load, but the **current page** does not: the file is read back
+document-scope only, so every command opens on the first page and `--page` is
+how to say otherwise. And the lint pass reads the current page, so a `run` that
+ends on page two is linted against page two, and a finding on one page never
+appears in the other page's `inspect`.
 
 ### `helpers.plainText(shape)`
 

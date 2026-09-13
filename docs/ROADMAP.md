@@ -221,8 +221,25 @@ and container size matching, PR #9 closed two by subsetting the fonts and
 rendering both committed exports in a real Chrome to compare them, PR #10
 closed the one about maths labels going unwarned, PR #15 closed the one about a
 diamond's label exceeding its outline by measuring the room the outline leaves
-rather than the width of the box, and PR #16 closed the one about the agent not
-being able to read its own export.
+rather than the width of the box, PR #16 closed the one about the agent not
+being able to read its own export, and PR #14 closed the two about the five
+directions and about a multi-page document.
+
+PR #14 rendered the roadmap's own `subgraph-8-9.mmd` fixture under each of
+`TD`, `TB`, `LR`, `RL` and `BT` and looked at all five PNGs. Nothing was
+wrong: the ranks run the stated way, the arrows meet the facing edges, the
+subgraph container sits behind its members, and the back edge loops out to
+the correct side in each. `respaceRanks` derives the visual rank order from
+the plan's own coordinates, which is what carries the reversal through, and
+the suspicion that it inverted for `RL` and `BT` was unfounded. The coverage
+that was missing is now `test/e2e/cli-directions.test.ts`, which asserts the
+rendered geometry rather than the `Plan`. The multi-page half did turn up two
+bugs, both in the page-scoped surface rather than in `--page` itself: a
+snippet could not create a page through the helpers bag at all, and `clear()`
+refused a page the snippet had just added while quoting a shape count the
+page had never held. `helpers.page(name)` and the fix are in that PR, and
+`test/e2e/cli-pages.test.ts` covers `--page` on every verb that takes it,
+`--allow-lints` on a non-current page, and `meta.lintIgnore` on page two.
 
 - **The mermaid importer gives a diamond the box a rectangle would get.** It
   sizes every node by counting the characters in its label, and a diamond holds
@@ -231,10 +248,6 @@ being able to read its own export.
   text through both slanted edges. `unreadable-label` says so since PR #15, and
   the e2e suite asserts that finding rather than allowing it; the fix is for the
   importer to widen a pinched geo, which is its own concern.
-- **`RL` and `BT` have never been looked at rendered.** All five directions
-  are covered by unit fixtures over the `Plan`, not by a picture.
-- **`--page`, `--allow-lints` and `meta.lintIgnore` are unexercised on a real
-  multi-page document.** Every document drawn so far has had one page.
 - **Rendering on Linux has never been eyeballed.** CI runs the end-to-end
   suite there and asserts sizes and labels; nobody has looked at the output.
 - **The mirror tab carries tldraw's watermark.** `serve` mounts the full UI,

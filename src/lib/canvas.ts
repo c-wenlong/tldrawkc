@@ -903,8 +903,27 @@ async function setPage(canvas: CanvasHandle, name: string): Promise<void> {
   try {
     await canvas.setPage(name);
   } catch (error) {
-    throw new UsageError(`--page ${name}: ${firstLine(error)}`);
+    throw new UsageError(`--page ${name}: ${bridgeMessage(error)}`);
   }
+}
+
+/**
+ * What the page meant to say, with playwright's wrapping taken off.
+ *
+ * An error thrown inside `page.evaluate` reaches Node as
+ * `page.evaluate: Error: tldrawkc: no page named "x". Pages: ...`, and a typo
+ * in `--page` is a usage mistake rather than a bug report: the caller needs the
+ * list of page names, not the name of the API that carried it. So the two
+ * prefixes and the `tldrawkc:` the CLI is about to add back are stripped.
+ *
+ * Only `--page` uses this. A snippet failure keeps the raw text on purpose,
+ * because there the frames and the wrapping are the diagnosis.
+ */
+function bridgeMessage(error: unknown): string {
+  return firstLine(error)
+    .replace(/^page\.evaluate:\s*/, "")
+    .replace(/^[A-Za-z]*Error:\s*/, "")
+    .replace(/^tldrawkc:\s*/, "");
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * The shape helpers: `box`, `text`, `note`, `remove` and `clear`.
+ * The shape helpers: `box`, `text`, `note`, `remove`, `clear` and `page`.
  *
  * The first three are idempotent on their key, take placement relative to
  * another shape, and put their words in a label rather than a floating text
@@ -19,6 +19,7 @@ import {
   type TLDefaultVerticalAlignStyle,
   type TLGeoShape,
   type TLNoteShape,
+  type TLPageId,
   type TLShapeId,
 } from "tldraw";
 
@@ -498,19 +499,58 @@ export interface ClearOptions {
  * drew the whole picture may wipe it and start again, a snippet handed someone
  * else's diagram may not. This mirrors the tldraw offline app's rule about
  * never clearing a page you did not create.
+ *
+ * `heldAtStart` is a count rather than a boolean because the refusal quotes it,
+ * and quoting the live count instead read as a lie: a snippet that drew one box
+ * on a page it had just made was told the page "already held 1 shape(s) when
+ * the snippet started", when the page had not existed at all.
  */
 export function clearPage(
   editor: Editor,
   opts: ClearOptions,
-  startedEmpty: boolean,
+  heldAtStart: number,
 ): number {
-  const shapes = editor.getCurrentPageShapes();
-  if (!startedEmpty && opts.force !== true) {
+  if (heldAtStart > 0 && opts.force !== true) {
     throw new Error(
-      `tldrawkc: clear() refused, this page already held ${shapes.length} shape(s) when the snippet started. Pass { force: true } to wipe a document you did not create.`,
+      `tldrawkc: clear() refused, this page already held ${String(heldAtStart)} shape(s) when the snippet started. Pass { force: true } to wipe a document you did not create.`,
     );
   }
+  const shapes = editor.getCurrentPageShapes();
   if (shapes.length === 0) return 0;
   editor.deleteShapes(shapes.map((shape) => shape.id));
   return shapes.length;
+}
+
+/**
+ * Switch to the page with this name, creating it when there is none, and return
+ * its id.
+ *
+ * Select-or-create rather than create, because `editor.createPage` uniquifies a
+ * name it has seen before: calling it twice with `details` leaves a second page
+ * called `details (1)`, and a snippet re-run against its own document would
+ * stack a new page on every pass instead of drawing over the one it made.
+ *
+ * The id is read back by diffing the page list rather than by looking the name
+ * up again, for the same reason.
+ */
+export function selectOrCreatePage(editor: Editor, name: string): TLPageId {
+  const trimmed = name.trim();
+  if (trimmed === "") throw new Error("tldrawkc: page() needs a name");
+
+  const existing = editor.getPages().find((page) => page.name === trimmed);
+  if (existing) {
+    editor.setCurrentPage(existing);
+    return existing.id;
+  }
+
+  const before = new Set(editor.getPages().map((page) => page.id));
+  editor.createPage({ name: trimmed });
+  const made = editor.getPages().find((page) => !before.has(page.id));
+  if (!made) {
+    throw new Error(
+      `tldrawkc: the page "${trimmed}" was not created. tldraw caps a document at ${String(editor.options.maxPages)} pages.`,
+    );
+  }
+  editor.setCurrentPage(made);
+  return made.id;
 }
