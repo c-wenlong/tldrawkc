@@ -148,6 +148,18 @@ git submodule update --init tools/tldrawkc
 npm run canvas -- doctor
 ```
 
+## Ways in
+
+Five surfaces over the same library. Each row links the section that covers it.
+
+| Way in | What it is |
+| --- | --- |
+| CLI | `tldrawkc <verb>` after a build, or `npm run --silent canvas -- <verb>` from a host repo that wires it as a script. See [Commands](#commands) |
+| Agent skill | `.claude/skills/tldrawkc-diagram/SKILL.md`, the draw, look, fix, export loop a coding agent loads. See [For agents](#for-agents) |
+| Library | `import { ... } from "tldrawkc"`, JSON in and JSON out, for Node code that wants the verbs without spawning a shell. See [Library](#library) |
+| `serve` | A real browser tab with tldraw's full UI, for a human to watch and nudge while an agent draws. See [Watching it, and nudging it](#watching-it-and-nudging-it) |
+| MCP | Not built. Phase 5 of the [roadmap](docs/ROADMAP.md), waiting on a second client such as Claude Desktop or Cursor. The library API is JSON in and out, so the wrapper would be thin |
+
 ## Commands
 
 ```bash
@@ -405,6 +417,125 @@ signature is the parameters as written.
 
 3 is deliberate. The work is real, so it is written, and the non-zero code is
 what stops an agent calling a diagram finished without looking at it.
+
+## Library
+
+`exports["."]` in `package.json` points at `dist/lib/index.js`, so everything
+re-exported from `src/lib/index.ts` is importable as `tldrawkc`. Nothing there
+prints and nothing calls `process.exit`: each function takes an options object
+and returns data. The options and the returned shapes are the ones the CLI
+parses and prints with `--json`, so [CLI.md](docs/CLI.md) is the contract for
+both.
+
+One function per verb. Four are named differently from the verb they back:
+`new` and `export` are reserved words in JavaScript, `meta set` is two words,
+and `api` reads a file the build generated rather than doing the work itself.
+
+| Function | Verb | Signature |
+| --- | --- | --- |
+| `run` | `run` | `run(options: RunOptions): Promise<RunResult>` |
+| `shot` | `shot` | `shot(options: ShotCommandOptions): Promise<ShotCommandResult>` |
+| `inspect` | `inspect` | `inspect(options: InspectOptions): Promise<InspectCommandResult>` |
+| `newDocument` | `new` | `newDocument(options: NewDocumentOptions): Promise<NewDocumentResult>` |
+| `exportCanvas` | `export` | `exportCanvas(options: ExportOptions): Promise<ExportResult>` |
+| `fromMermaid` | `from-mermaid` | `fromMermaid(options: FromMermaidOptions): Promise<FromMermaidResult>` |
+| `list` | `list` | `list(options?: ListOptions): Promise<ListResult>` |
+| `setMeta` | `meta set` | `setMeta(options: SetMetaOptions): Promise<SetMetaResult>` |
+| `serve` | `serve` | `serve(options: ServeOptions): Promise<ServeHandle>` |
+| `doctor` | `doctor` | `doctor(options?: DoctorOptions): Promise<DoctorReport>` |
+| `readApiReference` | `api` | `readApiReference(target?: string): Promise<HelperDoc[]>` |
+
+Every option and result type is exported beside its function. The defaults for
+the flags live in the CLI's argument parser and not in the library, so several
+fields a flag would have filled in are required by the option types that carry
+them: `padding`, `pixelRatio` and `timeoutMs`, where the CLI's own values are
+32, 2 and 30000, and the booleans behind `--create`, `--no-save`,
+`--allow-lints`, `--append` and `--no-open`. Which of them a given verb takes
+is on its own type.
+
+### A worked example
+
+```ts
+import { run, isTldrawkcError } from "tldrawkc";
+
+const snippet = `
+helpers.box('agent', 'agent cli', { x: 60, y: 60, w: 170, h: 64 })
+helpers.box('page', 'headless page', { after: 'agent', gap: 120, w: 190, h: 64 })
+helpers.connect('agent', 'page', { label: 'exec' })
+return helpers.getLints()
+`;
+
+try {
+  const result = await run({
+    file: "loop.tldr",
+    evalSource: snippet,
+    shot: "loop.png",
+    create: true,
+    save: true,
+    allowLints: false,
+    padding: 32,
+    pixelRatio: 2,
+    timeoutMs: 30_000,
+  });
+
+  console.log(result.shot, result.shapeCount, "shapes");
+  for (const lint of result.lints) console.log(lint.rule, lint.message);
+  console.log("exitCode", result.exitCode);
+} catch (error) {
+  if (isTldrawkcError(error)) {
+    console.error(error.message);
+    process.exitCode = error.exitCode;
+  } else throw error;
+}
+```
+
+`--code <path>` on the CLI is `code` here and `--eval <source>` is `evalSource`;
+pass one or the other. The browser is launched and closed inside the call.
+
+### Failures
+
+Every failure the library raises on purpose extends `TldrawkcError` and carries
+the exit code the CLI would use, so a caller reads a property rather than
+matching on message text. `isTldrawkcError(error)` narrows to that base, and
+`EXIT_CODES` is the table of the five codes by name.
+
+| Error | `exitCode` | Raised when |
+| --- | --- | --- |
+| `UsageError` | 1 | Bad arguments, a missing file, a flag that contradicts another. Nothing was written |
+| `EnvironmentError` | 1 | The machine could not do the job: the browser would not launch, the page never answered, the bundle is stale, the snippet ran past its timeout |
+| `ChromiumNotFoundError` | 1 | No browser could be used. Carries `tried`, every path with its source and why it was rejected. Exported from `browser.ts`, not from `errors.ts` |
+| `SnippetError` | 2 | The snippet threw. Carries `snippetStack`, the stack the page reported, which points into the snippet's own lines. The document is untouched |
+| `ExportError` | 4 | The export failed after the document was saved. The `.tldr` is safe |
+
+Exit 3 is not an error. Lints are a normal result, so `run`, `inspect` and
+`fromMermaid` all resolve and report it as `exitCode` on the returned object,
+0 or 3, next to the `lints` array itself. `hasBlockingLints` is the one
+function that decides, and `severityOf` applies the default. `exportCanvas`
+runs no lint pass at all: its `ExportResult` has no `lints` and its `exitCode`
+is always 0, because an export neither executes nor saves anything.
+
+### Beyond the verbs
+
+The rest of `src/lib/` is exported too, which is what lets the CLI be a thin
+layer over it. The pieces worth knowing about:
+
+| Group | What it holds |
+| --- | --- |
+| Browser | `withCanvas`, `openCanvasPage`, `resolveChromium`, `installedBrowserPaths`, `isOffHost`, plus `BRIDGE_TIMEOUT_MS`, `EXEC_TIMEOUT_MS` and `VIEWPORT` |
+| Lints | `hasBlockingLints`, `severityOf` |
+| Metadata | `readMeta`, `readTldrFacts`, `readDocumentMeta`, `applyMeta`, `mergeDocumentMeta`, `validatePatch`, `isEmptyPatch`, `stampSvg`, plus `META_KEY`, `META_VERSION`, `SLUG_PATTERN` and `SVG_TOPIC_ATTRIBUTE`. Pure functions over the file's JSON, so none of them launches a browser |
+| SVG fonts | `subsetSvgFonts`, `findFontFaces`, `spliceFontFaces`, `collectSvgCharacters`, `decodeEntities`, `SAFETY_CHARACTERS` |
+| Helper reference | `buildApiReference`, `readApiSources`, `extractHelperDocs`, `selectHelperDocs` |
+| Servers | `startPageServer`, `startServeServer`, `mirrorUrl`, `resolveStaticPath`, `contentTypeFor`, `openInBrowser`, `openCommandFor`, plus `DEFAULT_SERVE_PORT`, `MAX_DOCUMENT_BYTES`, `MIRROR_QUERY`, `CONTENT_TYPES` and `FALLBACK_CONTENT_TYPE` |
+| Paths and files | `resolveTldrPath`, `resolveOutputPath`, `resolveListDir`, `siblingPath`, `tempShotPath`, `tempSiblingPath`, `relativeToDir`, `doctorProbePath`, `readText`, `writeText`, `writeAtomic`, `writePng`, `modifiedAt`, `newestMtime`, and the `PACKAGE_ROOT`, `DIST_DIR`, `PAGE_DIST_DIR`, `PAGE_INDEX_HTML`, `PAGE_SRC_DIR`, `HELPERS_SRC_DIR`, `API_JSON`, `API_SOURCE_FILES`, `CLI_ENTRY` and `DEFAULT_LIST_DIR` constants |
+| Doctor | `isFontUrl`, `MINIMUM_NODE_MAJOR` |
+
+`serve` is the exception to every other verb. It returns while its server is
+still listening, so the handle it hands back carries the `close()` the caller
+owes it, along with `url`, `port`, the resolved `file` and `fellBackFrom` when
+the port it asked for was taken. Every verb that opens a browser closes it
+before it resolves, in a `finally`, whether the call succeeded or threw, and
+`list`, `setMeta` and `readApiReference` never open one at all.
 
 ## For agents
 
