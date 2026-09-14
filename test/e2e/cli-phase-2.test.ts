@@ -608,6 +608,48 @@ describe("from-mermaid", () => {
     expect(diamond.w).toBeLessThan(box.w * 3);
   });
 
+  it("sizes a rotated node against its own geometry, not its page box", async () => {
+    // `--append` can reach a node somebody turned, and a rotated shape's page
+    // box is neither of its own dimensions: at 45 degrees a wide, short diamond
+    // reports a square. Growing `props.w` and `props.h` by the difference
+    // against that box stretched this one sideways and left its height alone,
+    // which is a distorted shape rather than a fitted one.
+    await fs.writeFile(
+      path.join(dir, "rotated.mmd"),
+      ["flowchart TD", "  look{Looks right?} --> done[done]"].join("\n"),
+    );
+    const drawn = await cli([
+      "run",
+      "diagram.tldr",
+      "--create",
+      "--eval",
+      "helpers.box('look', 'Looks right?', { x: 60, y: 60, w: 196, h: 64, geo: 'diamond', verticalAlign: 'middle' });" +
+        " editor.updateShape({ id: 'shape:look', type: 'geo', rotation: Math.PI / 4 })",
+      "--allow-lints",
+    ]);
+    expect(drawn.code, drawn.stderr).toBe(0);
+
+    const appended = await cli([
+      "from-mermaid",
+      "diagram.tldr",
+      "--source",
+      path.join(dir, "rotated.mmd"),
+      "--append",
+      "--json",
+    ]);
+    expect(appended.code, appended.stderr).toBe(0);
+
+    // The file rather than `inspect`, which reports the page box a rotation
+    // inflates. What the fit pass wrote is the shape's own size.
+    const document = JSON.parse(await fs.readFile(path.join(dir, "diagram.tldr"), "utf8")) as {
+      records: Array<{ id: string; rotation?: number; props?: { w?: number; h?: number } }>;
+    };
+    const diamond = document.records.find((record) => record.id === "shape:look");
+    expect(diamond?.rotation).toBeCloseTo(Math.PI / 4, 5);
+    expect(diamond?.props?.w).toBeGreaterThan(196);
+    expect(diamond?.props?.h).toBeGreaterThan(64);
+  });
+
   it("refuses an existing document without --append, and adds to it with one", async () => {
     const source = path.join(FIXTURES, "simple-td.mmd");
     const first = await cli(["from-mermaid", "diagram.tldr", "--source", source, "--json"]);

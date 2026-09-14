@@ -212,12 +212,14 @@ function fitGeosToLabels(editor: Editor, ids: Iterable<TLShapeId>): void {
     const shape = editor.getShape(id);
     if (!shape || shape.type !== "geo") continue;
     const needed = boxForLabelOf(editor, shape);
-    const bounds = boundsOf(editor, id);
-    if (!needed || !bounds) continue;
-    // Measured against the rendered bounds and applied to the props, because
-    // `growY` makes a box whose label wrapped taller than the height it says.
-    const growW = needed.w - bounds.w;
-    const growH = needed.h - bounds.h;
+    if (!needed) continue;
+    // The shape's own geometry, not its page bounds, and applied to the props:
+    // `growY` makes a box whose label wrapped taller than the height it
+    // declares, and a page box is the rotated one. `--append` can reach a node
+    // somebody turned, and there the two disagree by more than the growth.
+    const bounds = editor.getShapeGeometry(shape).bounds;
+    const growW = needed.w - bounds.width;
+    const growH = needed.h - bounds.height;
     if (growW <= FIT_SLACK && growH <= FIT_SLACK) continue;
     const props = shape.props as { w: number; h: number };
     editor.updateShape({
