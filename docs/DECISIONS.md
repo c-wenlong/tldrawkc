@@ -661,3 +661,40 @@ fires on it and the reason to prefer `sans` for maths is legibility rather
 than a missing glyph. And **`⇒ ∈ ∉ ⊂ ∪ ∩ ∀ ∃ ∧ ∨ ∇` are in none of the four**,
 so the finding on one of those names no family to switch to: set-theory
 notation has to be written out in words.
+
+## D44. The importer sizes a pinched geo by measuring, in `applyPlan`
+
+**Verdict:** `parseMermaid` keeps its character count and `applyPlan` corrects
+it. A new pass between creating the shapes and re-spacing the ranks asks
+`boxForLabelOf` how big each node has to be for its label's ink to clear its
+own outline, and grows the ones that answer bigger than they are. The geometry
+behind it is `heightForLabel` in `helpers/lints.ts`, which is
+`usableWidthAtBand` inverted: same file, same numbers, opposite direction.
+
+**Why not in the parser:** the room a label needs is a measurement, and
+`mermaid.ts` has to stay importable with no editor in scope, which is what
+lets the unit suite run it in node (D24). Carrying per-geo inset factors on the
+`Plan` instead was the alternative and is worse twice over: it would put a
+table of numbers in the parser for shapes whose outlines the page already
+knows exactly, and it would still be sizing against a character count rather
+than against the text tldraw laid out. `respaceRanks` already exists for the
+same reason and settles the layout around whatever this pass grew, so a wider
+diamond costs nothing but the room it takes.
+
+**Why a sweep over widths:** tldraw wraps a label at the shape's width, so the
+label is not a fixed thing to fit. Sizing a diamond to the ink it has lets that
+ink spread onto fewer, longer lines, which needs a wider diamond again: the
+first version of this pass chased itself through three rounds and left the
+eight-node fixture's decision node 736 units wide, flat as a lozenge, against
+320 for the rectangles above it. Measured at each width under consideration
+both numbers are honest, and the cheapest box wins. The cost is `w + h` rather
+than area, because area alone prefers an ever wider, ever flatter shape: the
+minimum of `w * h` for a one-line label runs away to the horizon, and the
+minimum of `w + h` is the one that keeps a rank of a flowchart narrow.
+
+**Why nothing that already fits is touched:** a box that holds its label
+answers with itself, so every rectangle and any node an author sized generously
+comes through unchanged. Without that the sweep would happily widen a rectangle
+to unwrap a two-line label, which is a different opinion about how a diagram
+should look and not this tool's to have. Measured on the 32-node `learn-map`
+fixture: identical bounds and an identical lint list before and after.

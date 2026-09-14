@@ -23,7 +23,7 @@ import {
 } from "tldraw";
 
 import type { Lint, LintBinding, LintShape } from "./lints.js";
-import { runLints, usableWidthAtBand } from "./lints.js";
+import { heightForLabel, runLints, usableWidthAtBand } from "./lints.js";
 import { readDocumentMeta, type DiagramMeta } from "./meta.js";
 import type { Rect } from "./geometry.js";
 import { toShapeId, type ShapeKey } from "./ids.js";
@@ -330,6 +330,100 @@ function outlineFitOf(
   const usable = usableWidthAtBand(outline, top, bottom, ink.centre);
   if (!Number.isFinite(usable)) return undefined;
   return { usableWidth: usable, labelInkWidth: ink.width };
+}
+
+/**
+ * How many widths wider than the one it has {@link boxForLabelOf} will try.
+ *
+ * The sweep only ever grows: the parser's width is already the room a reader
+ * needs to read the words, and a narrower box would only wrap them harder.
+ */
+const FIT_WIDTH_STEPS = 12;
+
+/** How much wider each step of that sweep is. Twelve of these is about 4x. */
+const FIT_WIDTH_GROWTH = 1.12;
+
+/** How tall this label's block of text is at a given width, with no padding. */
+function textHeightOf(editor: Editor, shape: TLShape, width: number): number | undefined {
+  const text = plainTextOf(editor, shape);
+  if (text.trim().length === 0) return undefined;
+  const size = propOf<TLDefaultSizeStyle>(shape, "size");
+  const font = propOf<TLDefaultFontStyle>(shape, "font");
+  if (size === undefined || font === undefined) return undefined;
+  const theme = editor.getCurrentTheme();
+  return editor.textMeasure.measureText(text, {
+    ...TEXT_PROPS,
+    fontFamily: getFontFamily(theme, font),
+    fontSize: theme.fontSize * LABEL_FONT_SIZES[size],
+    lineHeight: theme.lineHeight,
+    maxWidth: Math.max(1, width - LABEL_PADDING * 2),
+  }).h;
+}
+
+/**
+ * The size this geo needs so its label's ink sits inside its outline, in the
+ * shape's own coordinate space, or `undefined` when it cannot be measured.
+ *
+ * The same measurements {@link outlineFitOf} makes for `unreadable-label`, put
+ * to {@link heightForLabel} the other way round: the rule asks how much room an
+ * outline leaves the ink, and this asks how big the outline has to be to leave
+ * enough. Sizing a shape and judging one therefore read the same geometry, and
+ * the mermaid importer cannot hand a diamond a box the rule then refuses.
+ *
+ * It is a sweep over widths rather than one answer, because a label is not a
+ * fixed thing: tldraw wraps it at the shape's width, so a wider shape holds the
+ * same words on fewer, longer lines. Widening a diamond to fit the ink it has
+ * therefore lets the ink spread, and chasing that from the inside grows a
+ * flowchart node into a flat lozenge four times the width of anything around
+ * it. Measured at a width instead, both numbers are honest, and the cheapest
+ * box wins: the sweep takes the smallest `w + h`, which is what a rank of a
+ * flowchart actually pays for a node.
+ *
+ * The height at each width comes from the outline, so a width no height can
+ * rescue drops out of the sweep rather than having to be guarded against.
+ * Nothing is ever narrowed, and a box already big enough answers itself.
+ */
+export function boxForLabelOf(
+  editor: Editor,
+  shape: TLShape,
+): { w: number; h: number } | undefined {
+  if (shape.type !== "geo") return undefined;
+  const geometry = editor.getShapeGeometry(shape);
+  if (!isGroup(geometry)) return undefined;
+  const body = geometry.children.find((child) => !child.isLabel);
+  if (!body?.isClosed) return undefined;
+  const outline = body.vertices.map((vertex) => ({ x: vertex.x, y: vertex.y }));
+  if (outline.length < 3) return undefined;
+
+  const start = geometry.bounds.width;
+  const tall = geometry.bounds.height;
+  if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(tall)) return undefined;
+
+  const fits = (width: number): number | undefined => {
+    // The label is measured at the width being considered, never at the one the
+    // shape happens to have, which is the whole point of sweeping.
+    const ink = labelInkOf(editor, shape, width);
+    const height = textHeightOf(editor, shape, width);
+    if (ink === undefined || height === undefined) return undefined;
+    return heightForLabel(outline, { width: ink.width, height }, width, LABEL_PADDING);
+  };
+
+  // A shape that already holds its label answers with itself. Every rectangle
+  // lands here, and so does a diamond somebody sized generously: the sweep is
+  // for a box that is wrong, and resizing one that is right would be the
+  // importer overruling the author over nothing.
+  const here = fits(start);
+  if (here !== undefined && here <= tall) return { w: start, h: tall };
+
+  let best: { w: number; h: number } | undefined;
+  for (let step = 0; step <= FIT_WIDTH_STEPS; step++) {
+    const width = Math.ceil(start * FIT_WIDTH_GROWTH ** step);
+    const needed = fits(width);
+    if (needed === undefined) continue;
+    const box = { w: width, h: Math.ceil(needed) };
+    if (best === undefined || box.w + box.h < best.w + best.h) best = box;
+  }
+  return best;
 }
 
 /**

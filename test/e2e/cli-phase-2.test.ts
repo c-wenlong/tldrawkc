@@ -52,7 +52,14 @@ interface InspectJson {
   pages: string[];
   page: string;
   bounds: { x: number; y: number; w: number; h: number } | null;
-  shapes: Array<{ id: string; type: string; geo?: string; text: string | null }>;
+  shapes: Array<{
+    id: string;
+    type: string;
+    geo?: string;
+    w: number;
+    h: number;
+    text: string | null;
+  }>;
   bindings: Array<{ arrow: string; from: string | null; to: string | null }>;
   lints: Array<{ rule: string; shapeIds: string[]; message: string; severity?: string }>;
 }
@@ -367,13 +374,12 @@ describe("export --svg font subsetting", () => {
   it("cuts the eight-node map to a fraction of its weight, labels intact", async () => {
     const source = path.join(FIXTURES, "subgraph-8-9.mmd");
     const labels = mermaidLabels(await fs.readFile(source, "utf8"));
-    // `--allow-lints`, because the fixture's `Looks right?` diamond is a real
-    // finding: the importer sizes every node by counting characters and hands a
-    // diamond the same box a rectangle would get, so its label runs out through
-    // the slanted edges. This test is about the SVG's weight, not about that.
-    expect(
-      await cli(["from-mermaid", "diagram.tldr", "--source", source, "--allow-lints"]),
-    ).toHaveProperty("code", 0);
+    // No `--allow-lints`: the import is clean, `Looks right?` included, since
+    // the importer grows a pinched geo to the box its label needs.
+    expect(await cli(["from-mermaid", "diagram.tldr", "--source", source])).toHaveProperty(
+      "code",
+      0,
+    );
 
     const small = await cli(["export", "diagram.tldr", "--svg", "small.svg", "--json"]);
     expect(small.code).toBe(0);
@@ -407,13 +413,12 @@ describe("export --svg font subsetting", () => {
 
   it("keeps the whole font for --no-subset-fonts, and says so", async () => {
     const source = path.join(FIXTURES, "subgraph-8-9.mmd");
-    // `--allow-lints`, because the fixture's `Looks right?` diamond is a real
-    // finding: the importer sizes every node by counting characters and hands a
-    // diamond the same box a rectangle would get, so its label runs out through
-    // the slanted edges. This test is about the SVG's weight, not about that.
-    expect(
-      await cli(["from-mermaid", "diagram.tldr", "--source", source, "--allow-lints"]),
-    ).toHaveProperty("code", 0);
+    // No `--allow-lints`: the import is clean, `Looks right?` included, since
+    // the importer grows a pinched geo to the box its label needs.
+    expect(await cli(["from-mermaid", "diagram.tldr", "--source", source])).toHaveProperty(
+      "code",
+      0,
+    );
 
     const small = await cli(["export", "diagram.tldr", "--svg", "small.svg", "--json"]);
     const whole = await cli([
@@ -534,12 +539,11 @@ describe("from-mermaid", () => {
     expect(labels).toHaveLength(8);
 
     const built = await cli(["from-mermaid", "diagram.tldr", "--source", source, "--json"]);
-    // Exit 3, not 0: the import is correct and one of the shapes it drew is
-    // not. The importer sizes a node by counting its characters and gives a
-    // diamond the box a rectangle would get, so `Looks right?` runs out through
-    // the slanted edges, which `unreadable-label` now says out loud. The
-    // document is written either way, which is what the rest of this checks.
-    expect(built.code).toBe(3);
+    // Exit 0: every node holds its label, `Looks right?` included. The parser
+    // sizes a node by counting characters, which describes a box, and the fit
+    // pass then grows the diamond until its outline holds the text that box
+    // would have let out through the slanted edges.
+    expect(built.code).toBe(0);
     const json = JSON.parse(built.stdout) as MermaidJson;
     expect(Object.keys(json.nodes)).toHaveLength(8);
     expect(json.edges).toHaveLength(9);
@@ -547,15 +551,13 @@ describe("from-mermaid", () => {
     expect(json.unsupported).toEqual([]);
 
     const read = await cli(["inspect", "diagram.tldr", "--json"]);
-    expect(read.code).toBe(3);
+    expect(read.code).toBe(0);
     const canvas = JSON.parse(read.stdout) as InspectJson;
     expect(canvas.bindings).toHaveLength(9);
     expect(canvas.bindings.every((binding) => binding.from && binding.to)).toBe(true);
-    // The diamond above, and nothing else. Named rather than allowed, so a
-    // second finding appearing here is a red test rather than a shrug.
-    expect(errorLints(canvas.lints).map((lint) => [lint.rule, lint.shapeIds])).toEqual([
-      ["unreadable-label", ["shape:look"]],
-    ]);
+    // Nothing at all, listed rather than counted so that a finding which does
+    // appear names itself in the failure.
+    expect(errorLints(canvas.lints).map((lint) => [lint.rule, lint.shapeIds])).toEqual([]);
 
     const exported = await cli(["export", "diagram.tldr", "--svg", "out.svg"]);
     expect(exported.code).toBe(0);
@@ -563,6 +565,89 @@ describe("from-mermaid", () => {
     for (const label of labels) {
       expect(svg, `the SVG is missing "${label}"`).toContain(label);
     }
+  });
+
+  it("gives a pinched geo the box its outline needs, not the one a box would", async () => {
+    // The same words in a rectangle and in a diamond. A diamond holds a
+    // fraction of its width across the rows a label sits on, so the two cannot
+    // come out the same size without the label crossing the slanted edges,
+    // which is the whole of this gap. Both are clean, and the diamond is
+    // bigger in both directions.
+    await fs.writeFile(
+      path.join(dir, "pinched.mmd"),
+      ["flowchart TD", "  box[Ship it or think again]", "  box --> dia{Ship it or think again}"].join(
+        "\n",
+      ),
+    );
+    const built = await cli([
+      "from-mermaid",
+      "diagram.tldr",
+      "--source",
+      path.join(dir, "pinched.mmd"),
+      "--json",
+    ]);
+    expect(built.code, built.stderr).toBe(0);
+
+    const read = await cli(["inspect", "diagram.tldr", "--json"]);
+    expect(read.code).toBe(0);
+    const canvas = JSON.parse(read.stdout) as InspectJson;
+    expect(errorLints(canvas.lints)).toEqual([]);
+
+    const shapeOf = (id: string) => {
+      const found = canvas.shapes.find((shape) => shape.id === `shape:${id}`);
+      if (!found) throw new Error(`no shape for ${id}`);
+      return found;
+    };
+    const box = shapeOf("box");
+    const diamond = shapeOf("dia");
+    expect(diamond.geo).toBe("diamond");
+    expect(diamond.w).toBeGreaterThan(box.w);
+    expect(diamond.h).toBeGreaterThan(box.h);
+    // And not by an absurd amount: a node that grew four times as wide as the
+    // rectangle beside it is the failure this fix must not trade up for.
+    expect(diamond.w).toBeLessThan(box.w * 3);
+  });
+
+  it("sizes a rotated node against its own geometry, not its page box", async () => {
+    // `--append` can reach a node somebody turned, and a rotated shape's page
+    // box is neither of its own dimensions: at 45 degrees a wide, short diamond
+    // reports a square. Growing `props.w` and `props.h` by the difference
+    // against that box stretched this one sideways and left its height alone,
+    // which is a distorted shape rather than a fitted one.
+    await fs.writeFile(
+      path.join(dir, "rotated.mmd"),
+      ["flowchart TD", "  look{Looks right?} --> done[done]"].join("\n"),
+    );
+    const drawn = await cli([
+      "run",
+      "diagram.tldr",
+      "--create",
+      "--eval",
+      "helpers.box('look', 'Looks right?', { x: 60, y: 60, w: 196, h: 64, geo: 'diamond', verticalAlign: 'middle' });" +
+        " editor.updateShape({ id: 'shape:look', type: 'geo', rotation: Math.PI / 4 })",
+      "--allow-lints",
+    ]);
+    expect(drawn.code, drawn.stderr).toBe(0);
+
+    const appended = await cli([
+      "from-mermaid",
+      "diagram.tldr",
+      "--source",
+      path.join(dir, "rotated.mmd"),
+      "--append",
+      "--json",
+    ]);
+    expect(appended.code, appended.stderr).toBe(0);
+
+    // The file rather than `inspect`, which reports the page box a rotation
+    // inflates. What the fit pass wrote is the shape's own size.
+    const document = JSON.parse(await fs.readFile(path.join(dir, "diagram.tldr"), "utf8")) as {
+      records: Array<{ id: string; rotation?: number; props?: { w?: number; h?: number } }>;
+    };
+    const diamond = document.records.find((record) => record.id === "shape:look");
+    expect(diamond?.rotation).toBeCloseTo(Math.PI / 4, 5);
+    expect(diamond?.props?.w).toBeGreaterThan(196);
+    expect(diamond?.props?.h).toBeGreaterThan(64);
   });
 
   it("refuses an existing document without --append, and adds to it with one", async () => {

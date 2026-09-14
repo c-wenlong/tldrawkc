@@ -98,23 +98,22 @@ async function importAs(direction: string): Promise<InspectJson["shapes"]> {
 
   const imported = await cli(["from-mermaid", tldr, "--source", mmd, "--json"]);
   expect(imported.stderr).toBe("");
-  // Exit 3 under every direction, and for the same one reason each time: the
-  // importer sizes a node by counting characters and hands a diamond the box a
-  // rectangle would get, so `Looks right?` runs out through the slanted edges.
-  // That is the gap this file's neighbour in `cli-phase-2.test.ts` records, and
-  // naming it rather than allowing it is what makes a direction that broke
-  // something else show up here as a second finding.
-  expect(imported.code).toBe(3);
+  // Exit 0 under every direction. The `Looks right?` diamond used to be a
+  // finding here, because the importer handed it the box a rectangle would get
+  // and its label ran out through the slanted edges; the fit pass sizes it
+  // against its own outline now, and the ranks still settle around the bigger
+  // shape whichever way they run.
+  expect(imported.code).toBe(0);
 
   const read = await cli(["inspect", tldr, "--json"]);
-  expect(read.code).toBe(3);
+  expect(read.code).toBe(0);
   const parsed = JSON.parse(read.stdout) as InspectJson;
   expect(
     parsed.lints
       .filter((lint) => lint.severity !== "warn")
       .map((lint) => [lint.rule, lint.shapeIds]),
     `unexpected findings under ${direction}`,
-  ).toEqual([["unreadable-label", ["shape:look"]]]);
+  ).toEqual([]);
   return parsed.shapes;
 }
 

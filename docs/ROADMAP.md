@@ -222,8 +222,9 @@ rendering both committed exports in a real Chrome to compare them, PR #10
 closed the one about maths labels going unwarned, PR #15 closed the one about a
 diamond's label exceeding its outline by measuring the room the outline leaves
 rather than the width of the box, PR #16 closed the one about the agent not
-being able to read its own export, and PR #14 closed the two about the five
-directions and about a multi-page document.
+being able to read its own export, PR #14 closed the two about the five
+directions and about a multi-page document, and PR #17 closed the last one, the
+importer handing a diamond the box a rectangle would get.
 
 PR #14 rendered the roadmap's own `subgraph-8-9.mmd` fixture under each of
 `TD`, `TB`, `LR`, `RL` and `BT` and looked at all five PNGs. Nothing was
@@ -241,13 +242,17 @@ page had never held. `helpers.page(name)` and the fix are in that PR, and
 `test/e2e/cli-pages.test.ts` covers `--page` on every verb that takes it,
 `--allow-lints` on a non-current page, and `meta.lintIgnore` on page two.
 
-- **The mermaid importer gives a diamond the box a rectangle would get.** It
-  sizes every node by counting the characters in its label, and a diamond holds
-  a fraction of its box's width across the rows a label sits on, so
-  `Looks right?` in `test/fixtures/mermaid/subgraph-8-9.mmd` imports with its
-  text through both slanted edges. `unreadable-label` says so since PR #15, and
-  the e2e suite asserts that finding rather than allowing it; the fix is for the
-  importer to widen a pinched geo, which is its own concern.
+PR #17 sizes a pinched geo against its own outline. `applyPlan` grew a pass
+that asks `unreadable-label`'s geometry the other way round, so the importer's
+idea of a box big enough and the rule's idea of one are the same idea, and the
+five directions, the eight-node fixture and `verify` all import clean rather
+than with a finding the suites had to name. It is a sweep over widths rather
+than one answer, because tldraw wraps a label at the shape's width: widening a
+diamond to fit the ink it has lets that ink spread onto fewer, longer lines, and
+chasing it from the inside grew the fixture's decision node to four times the
+width of everything around it before the sweep replaced it. What the parser's
+character count still buys is the width the sweep starts from.
+
 - **Rendering on Linux has never been eyeballed.** CI runs the end-to-end
   suite there and asserts sizes and labels; nobody has looked at the output.
 - **The mirror tab carries tldraw's watermark.** `serve` mounts the full UI,

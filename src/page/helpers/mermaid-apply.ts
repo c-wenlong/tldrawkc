@@ -7,12 +7,15 @@
  * shape helpers, which do, so it gets its own file. HELPERS.md says both halves
  * share `mermaid.ts`; that is the one correction phase 2 makes to it.
  *
- * The interesting work is not creating the shapes, it is the pass afterwards.
- * `parseMermaid` sizes a box by counting characters, and tldraw then grows the
- * real shape when the label wraps, so the plan's tidy grid arrives with rows
- * sitting on each other. `respace` reads the bounds tldraw actually produced
- * and lays the ranks out again against those, which is what gets the fixture to
- * zero lints.
+ * The interesting work is not creating the shapes, it is the two passes
+ * afterwards. `parseMermaid` sizes a box by counting characters, which is a
+ * guess, and a guess at a box: `fitGeosToLabels` grows anything whose outline
+ * holds its label more tightly than its bounding box does, which is every
+ * diamond with anything to say. Then tldraw grows the real shape again when the
+ * label wraps, so the plan's tidy grid arrives with rows sitting on each other,
+ * and `respace` reads the bounds tldraw actually produced and lays the ranks
+ * out against those. Between them they are what gets the fixture to zero
+ * lints.
  */
 
 import type { Editor, TLShapeId } from "tldraw";
@@ -20,7 +23,7 @@ import type { Editor, TLShapeId } from "tldraw";
 import { makeBox } from "./shapes.js";
 import { makeConnection } from "./connect.js";
 import { boxShapes, DEFAULT_CONTAINER_MARGIN } from "./layout.js";
-import { lintPage } from "./read.js";
+import { boxForLabelOf, lintPage } from "./read.js";
 import type { Lint } from "./lints.js";
 import type { Rect, Side } from "./geometry.js";
 import {
@@ -40,6 +43,13 @@ export const DEFAULT_APPLY_RANK_GAP = 120;
 export const DEFAULT_APPLY_NODE_GAP = 60;
 /** How many times the re-space pass will widen the gaps chasing an overlap. */
 const MAX_RESPACE_ROUNDS = 4;
+/**
+ * How much bigger the fit pass has to want a shape before it resizes it, in
+ * page units. Both sides of that comparison are measurements, so a shape that
+ * already fits can still come back wanting a fraction of a unit more, and
+ * rewriting a shape to grow it by nothing visible is a write for nothing.
+ */
+const FIT_SLACK = 0.5;
 /** How much each extra round widens the gaps. */
 const RESPACE_GROWTH = 1.35;
 
@@ -178,6 +188,52 @@ function boundsOf(editor: Editor, id: TLShapeId): Rect | null {
 }
 
 /**
+ * Grow every node whose outline holds its label more tightly than its box does.
+ *
+ * The parser sizes a node by counting characters, which describes a box, and a
+ * diamond only reaches its box's width along one line through its middle. So a
+ * label that fits the box perfectly well runs out through both slanted edges,
+ * which is what `unreadable-label` says and what this pass stops it having to.
+ *
+ * It runs here rather than in the parser for the reason {@link respaceRanks}
+ * does: the room a label needs is a measurement, and `mermaid.ts` has to stay
+ * importable with no editor in scope. `boxForLabelOf` asks the geometry the
+ * lint asks, inverted, so the importer's idea of a big enough box and the
+ * rule's idea of one are the same idea.
+ *
+ * One pass, no loop. The box that comes back was measured at its own width
+ * rather than at the one the shape has, so applying it cannot invalidate it:
+ * that is the whole reason `boxForLabelOf` sweeps widths instead of answering
+ * from where the shape happens to be. Nothing ever shrinks, so a node the
+ * author sized generously keeps the size it was given.
+ */
+function fitGeosToLabels(editor: Editor, ids: Iterable<TLShapeId>): void {
+  for (const id of ids) {
+    const shape = editor.getShape(id);
+    if (!shape || shape.type !== "geo") continue;
+    const needed = boxForLabelOf(editor, shape);
+    if (!needed) continue;
+    // The shape's own geometry, not its page bounds, and applied to the props:
+    // `growY` makes a box whose label wrapped taller than the height it
+    // declares, and a page box is the rotated one. `--append` can reach a node
+    // somebody turned, and there the two disagree by more than the growth.
+    const bounds = editor.getShapeGeometry(shape).bounds;
+    const growW = needed.w - bounds.width;
+    const growH = needed.h - bounds.height;
+    if (growW <= FIT_SLACK && growH <= FIT_SLACK) continue;
+    const props = shape.props as { w: number; h: number };
+    editor.updateShape({
+      id,
+      type: "geo",
+      props: {
+        w: Math.round(props.w + Math.max(0, growW)),
+        h: Math.round(props.h + Math.max(0, growH)),
+      },
+    });
+  }
+}
+
+/**
  * Lay the ranks out again against the bounds tldraw actually produced.
  *
  * Rank membership comes from the parser's own {@link rank}, so this agrees with
@@ -283,9 +339,10 @@ function respaceRanks(
  * Turn a parsed {@link Plan} into boxes, bound arrows and subgraph containers.
  *
  * Boxes first, because tldraw only knows how tall a label makes a box once the
- * box exists; then the re-space pass against the real bounds; then the arrows,
- * so every anchor is chosen against final positions; then the containers, which
- * are drawn around whatever the layout settled on and sent to the back.
+ * box exists; then the fit pass, which is the same argument about width; then
+ * the re-space pass against the real bounds; then the arrows, so every anchor
+ * is chosen against final positions; then the containers, which are drawn
+ * around whatever the layout settled on and sent to the back.
  *
  * If a shape-on-shape overlap survives the first pass the gaps are widened and
  * the pass runs again, up to a few rounds. In practice the first pass is
@@ -327,6 +384,9 @@ export function applyPlan(
   }
 
   const ids = new Map<string, TLShapeId>(Object.entries(nodes));
+  // Before the re-space, so the bands and slots are laid out against the sizes
+  // the labels actually need rather than against the parser's first guess.
+  fitGeosToLabels(editor, ids.values());
   // The plan's own top-left corner. Zero is the fallback for a plan with no
   // nodes, not a floor: folding it into the `Math.min` moved every layout that
   // started at a positive origin (which is all of them, the parser defaults to

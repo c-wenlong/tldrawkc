@@ -307,7 +307,7 @@ unit-testable without a browser:
 | Function | Where | What |
 | --- | --- | --- |
 | `parseMermaid(source, opts): Plan` | `page/helpers/mermaid.ts`, pure, no editor | Tokenises the flowchart, assigns each node a rank (longest path from the sources) and a slot within the rank, and returns a `Plan`. |
-| `applyPlan(plan): result` | `page/helpers/mermaid-apply.ts`, needs `editor` | Creates the shapes with `box`, the arrows with `connect`, the subgraph containers with `boxShapes`. |
+| `applyPlan(plan): result` | `page/helpers/mermaid-apply.ts`, needs `editor` | Creates the shapes with `box`, sizes any whose outline pinches its label, re-spaces the ranks against the bounds tldraw produced, then draws the arrows with `connect` and the subgraph containers with `boxShapes`. |
 
 `applyPlan` lives in its own file rather than beside the parser, because
 `mermaid.ts` must stay importable with no tldraw in scope: that is what lets
@@ -345,6 +345,27 @@ declined line names are still declared.
 adding a second one or refusing. That is `box`'s documented idempotence, and
 it is what makes re-importing an edited flowchart work. Two independent
 flowcharts on one canvas need distinct ids or separate pages.
+
+A node's size starts as a character count, which describes a box, and ends as a
+measurement, which is what a shape that is not a box needs. `w` and `h` on a
+`Plan` node are the parser's guess: the longest line times a per-character
+width, plus padding, floored at 160 and capped at 320, and a little wider for a
+diamond. Then `applyPlan` measures the label tldraw actually laid out and grows
+any node whose outline holds that text more tightly than its box does, asking
+the same geometry `unreadable-label` asks and inverting it. A rectangle's
+outline is its box, so a rectangle is never touched; a diamond roughly doubles,
+an ellipse takes about the square root of two, and neither number is written
+down anywhere, both falling out of the outline tldraw reports.
+
+Because tldraw wraps a label at the shape's own width, that is a sweep over
+widths rather than a single answer. Sizing a diamond to the ink it has lets the
+ink spread onto fewer, longer lines, so the measurement has to be taken at each
+width under consideration and the cheapest box, the smallest `w + h`, wins.
+
+One of each of the five node shapes mermaid can ask for, each carrying a label
+too long for the box the parser guessed, after that pass:
+
+![Five mermaid node shapes imported onto a tldraw canvas in a single column: a rectangle, a capsule, a diamond, another capsule and an ellipse, each holding a long two-line label inside its outline](example-geo-sizing.png)
 
 The layout is deliberately simple. The agent is expected to look at the
 result and nudge.
@@ -470,7 +491,9 @@ cross the edge it was pushed towards. So what the run gives back is the widest
 span centred on the ink that fits inside it. A
 rectangle's outline gives the label every unit of its width and reports no
 usable width at all, which is why this check is purely additive and cannot
-change what the rule says about a plain box. `triangle`, `star`, `hexagon`,
+change what the rule says about a plain box. The mermaid importer sizes a node
+with the same geometry read backwards, so what it draws and what this rule
+demands cannot drift apart. `triangle`, `star`, `hexagon`,
 `cloud`, `heart` and the two round geos pinch to the degree their outlines do.
 
 That widest rendered line needs its own measurement, and `measureText` cannot
