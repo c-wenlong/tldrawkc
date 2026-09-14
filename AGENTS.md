@@ -593,6 +593,22 @@ Collected as they are found, so they are not rediscovered.
   downscales to stay inside the browser's canvas limits (a frame 128 units
   tall came back as 126.96 at x = 100000 and 125.28 at x = 200000). That
   measurement is where `OFF_PAGE_LIMIT` of 10000 comes from.
+- **Widening a shape re-wraps its label, so "grow it until it fits" chases its
+  own tail.** tldraw wraps a geo label at the shape's width, so a diamond made
+  wider to hold the ink it has lets that ink spread onto fewer, longer lines and
+  needs to be wider again. Measured on `subgraph-8-9.mmd`: three rounds took the
+  `Looks right?` diamond to 736 units, flat as a lozenge. The fix in the
+  importer is to measure the label at each width under consideration rather
+  than at the width the shape happens to have, which
+  `editor.textMeasure.measureTextSpans` allows since the width is an argument,
+  and to take the box with the smallest `w + h`. Area is the wrong cost: for a
+  one-line label `w * h` falls away for ever as the shape flattens.
+- **A geo's label rectangle is the measured text plus padding, and the text is
+  measured at `w - 2 * LABEL_PADDING`.** `GeoShapeUtil.getGeometry` floors it at
+  one line's height and clamps it to the shape, so on anything that fits, the
+  band `unreadable-label` walks is exactly the height `measureText` reports at
+  that width. That is what lets the importer work out the band a box it has not
+  drawn yet would have.
 - **The label rectangle in a shape's geometry is clamped to the shape.**
   `GeoShapeUtil.getGeometry` returns a `Group2d` whose second child is a
   `Rectangle2d` with `isLabel: true`, and it is `Math.min`ed against the

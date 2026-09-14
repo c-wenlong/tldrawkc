@@ -345,6 +345,120 @@ export function usableWidthAtBand(
   return narrowest;
 }
 
+/** What a label draws, as {@link heightForLabel} needs it. */
+export interface LabelInk {
+  /** The widest line the label renders as, with no padding. */
+  width: number;
+  /** How tall the block of rows that text occupies is. One line has a height. */
+  height: number;
+}
+
+/**
+ * How far past the label's own box {@link heightForLabel} will grow a shape.
+ *
+ * The room an outline leaves runs out slowly: a diamond only a hair wider than
+ * its label needs to be enormously tall before the rows the text sits on reach
+ * that width. Six times the label's own height is the point at which growing
+ * taller has stopped being an answer and the caller should try a wider box
+ * instead, which is what the sweep in `boxForLabelOf` does with the refusal.
+ */
+const MAX_FIT_SCALE = 6;
+
+/** Bisection steps behind {@link heightForLabel}. 18 lands inside a thousandth. */
+const FIT_SCALE_STEPS = 18;
+
+/**
+ * How far inside itself {@link heightForLabel} walks the label's band, in page
+ * units.
+ *
+ * A row exactly on a horizontal edge of the outline crosses nothing, by the
+ * half-open rule {@link widestRunAt} counts crossings with, and reads as no
+ * room at all. That row is reached whenever the band is the whole height, which
+ * is a shape exactly as tall as its text, so the walk starts a hair inside. Far
+ * too small to move an answer, and the difference between one and an infinite
+ * loop of growing a rectangle that already fits.
+ */
+const BAND_EDGE_INSET = 0.01;
+
+/**
+ * How tall a geo of this width has to be for its label's ink to sit inside the
+ * outline: {@link usableWidthAtBand} inverted.
+ *
+ * `unreadable-label` asks how much room an outline leaves a label across the
+ * rows its text inks, and a diamond leaves a fraction of its box. This asks the
+ * same geometry the other way round, so the two cannot disagree: given the ink
+ * a label draws and a width to hold it in, how tall does the shape have to be.
+ * The mermaid importer is the caller, because it is the one place that chooses
+ * a box before anybody has looked at the picture.
+ *
+ * Nothing is tabled per geo. `outline` is normalised to its own bounding box,
+ * which makes it a shape rather than a size, and the answer is bisected out of
+ * it. What falls out is what the arithmetic predicts: a diamond twice as wide
+ * as its label's ink needs to be twice as tall as that ink, and an ellipse
+ * wants the square root of two in both directions. A rectangle's outline is its
+ * box, so it answers the label's own height and no more.
+ *
+ * The rows have to hold `ink.width` plus a `padding` on each side, which is the
+ * room a rectangle gives its own label, so a pinched geo ends up no tighter on
+ * its text than a plain box is. Demanding only that the ink fit would leave an
+ * imported diagram sitting on the slack `unreadable-label` allows rather than
+ * clear of it. The label is taken as centred, which is tldraw's default
+ * alignment and what the importer draws.
+ *
+ * `undefined` means no height will do at this width: the outline never opens up
+ * far enough, or it would have to grow past {@link MAX_FIT_SCALE} to get there.
+ * The answer to that is a wider shape, which is the caller's decision to make.
+ */
+export function heightForLabel(
+  outline: readonly Point[],
+  ink: LabelInk,
+  width: number,
+  padding: number,
+): number | undefined {
+  if (outline.length < 3) return undefined;
+  const needed = ink.width + padding * 2;
+  const base = ink.height + padding * 2;
+  if (!(width > needed) || !(base > 0)) return undefined;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of outline) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  const boxW = maxX - minX;
+  const boxH = maxY - minY;
+  if (!(boxW > 0) || !(boxH > 0)) return undefined;
+
+  // Wider the taller the box, because the band the text occupies keeps its own
+  // height while the outline around it grows, so this bisects.
+  const room = (height: number): number => {
+    const scaled = outline.map((point) => ({
+      x: ((point.x - minX) / boxW) * width,
+      y: ((point.y - minY) / boxH) * height,
+    }));
+    const top = (height - ink.height) / 2;
+    const inset = Math.min(BAND_EDGE_INSET, ink.height / 2);
+    return usableWidthAtBand(scaled, top + inset, top + ink.height - inset, width / 2);
+  };
+
+  if (room(base) >= needed) return base;
+  const tallest = base * MAX_FIT_SCALE;
+  if (room(tallest) < needed) return undefined;
+  let short = base;
+  let tall = tallest;
+  for (let i = 0; i < FIT_SCALE_STEPS; i++) {
+    const middle = (short + tall) / 2;
+    if (room(middle) >= needed) tall = middle;
+    else short = middle;
+  }
+  return tall;
+}
+
 /**
  * Is this rule muted on this shape?
  *

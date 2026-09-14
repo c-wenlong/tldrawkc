@@ -37,6 +37,7 @@ import {
   segmentReachesInside,
   severityOf,
   chordWidthAt,
+  heightForLabel,
   usableWidthAtBand,
   widestRunAt,
   unreadableLabels,
@@ -1147,6 +1148,76 @@ describe("the room an outline leaves a label", () => {
     expect(usableWidthAtBand(rhombus, 15, 45, 50)).toBe(50);
     // Pushed left in a diamond, the room collapses much faster than the chord.
     expect(usableWidthAtBand(rhombus, 15, 45, 30)).toBe(10);
+  });
+});
+
+describe("the box an outline needs for a label", () => {
+  const square = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+  // Points at the middle of the four edges, whatever size it is scaled to.
+  const rhombus = [
+    { x: 50, y: 0 },
+    { x: 100, y: 50 },
+    { x: 50, y: 100 },
+    { x: 0, y: 50 },
+  ];
+  const ellipse = Array.from({ length: 64 }, (_, i) => {
+    const angle = (i / 64) * Math.PI * 2;
+    return { x: 50 + 50 * Math.cos(angle), y: 50 + 50 * Math.sin(angle) };
+  });
+  const ink = { width: 100, height: 100 };
+
+  it("asks a rectangle for the label's own height and nothing more", () => {
+    // The outline is the box, so every row is the full width: a label that fits
+    // across the middle fits everywhere, and the shape only has to be as tall
+    // as the text plus its padding.
+    expect(heightForLabel(square, ink, 140, 0)).toBe(100);
+    expect(heightForLabel(square, ink, 140, 16)).toBe(132);
+  });
+
+  it("doubles a diamond, which is what the arithmetic predicts", () => {
+    // A diamond's chord at the top of the band is `w * (1 - height / h)`, so at
+    // twice the ink's width it needs twice the ink's height. That factor is
+    // derived here rather than written down anywhere in the source.
+    // Bisected rather than solved, and the band is walked a hair inside
+    // itself, so the answer lands within a twentieth of a unit either way.
+    expect(heightForLabel(rhombus, ink, 200, 0)).toBeCloseTo(200, 1);
+    expect(heightForLabel(rhombus, ink, 400, 0)).toBeCloseTo(400 / 3, 1);
+  });
+
+  it("asks an ellipse for the square root of two", () => {
+    // `w * sqrt(1 - (height / h)^2)` at a width of root two, to the tolerance a
+    // 64-sided polygon of a circle can answer with.
+    const needed = heightForLabel(ellipse, ink, 100 * Math.SQRT2, 0);
+    expect(needed).toBeDefined();
+    expect(needed ?? 0).toBeGreaterThan(100 * Math.SQRT2 * 0.98);
+    expect(needed ?? 0).toBeLessThan(100 * Math.SQRT2 * 1.04);
+  });
+
+  it("leaves the ink a padding on each side, the room a box gives its label", () => {
+    // The ink is 100 across and the rows it sits on have to hold 132, so a
+    // diamond 264 wide has to open up to half its width across those rows,
+    // which it does at twice their height. The padding widens what the rows
+    // must hold; it never joins the band, because a corner cutting into
+    // whitespace is not something a reader sees.
+    expect(heightForLabel(rhombus, ink, 264, 16)).toBeCloseTo(200, 1);
+  });
+
+  it("refuses a width the outline cannot open up to, however tall it gets", () => {
+    // Narrower than the ink, so no height helps.
+    expect(heightForLabel(rhombus, ink, 90, 0)).toBeUndefined();
+    // Wide enough in principle, but only at a height six times the label's own,
+    // which is the point at which a taller shape has stopped being the answer.
+    expect(heightForLabel(rhombus, ink, 110, 0)).toBeUndefined();
+  });
+
+  it("answers nothing for a degenerate outline or an ink with no size", () => {
+    expect(heightForLabel([{ x: 0, y: 0 }, { x: 1, y: 1 }], ink, 200, 0)).toBeUndefined();
+    expect(heightForLabel(rhombus, { width: 0, height: 0 }, 200, 0)).toBeUndefined();
   });
 });
 

@@ -136,7 +136,14 @@ const PX_PER_CHAR = 9;
 const WIDTH_PADDING = 32;
 const BASE_HEIGHT = 64;
 const EXTRA_LINE_HEIGHT = 24;
-/** A diamond wastes its corners, so the same text needs a wider box. */
+/**
+ * A diamond wastes its corners, so the same text needs a wider box.
+ *
+ * A head start rather than an answer. Nothing in node can measure a label, so
+ * `applyPlan` grows a node whose outline pinches its text once the shape exists
+ * and the browser can be asked; what this buys is a width that sweep can begin
+ * from, since it only ever grows.
+ */
 const DIAMOND_WIDTH_FACTOR = 1.4;
 
 const DIRECTIONS: readonly Direction[] = ["TD", "TB", "LR", "RL", "BT"];
@@ -655,7 +662,10 @@ export function rank(nodeIds: string[], edges: PlanEdge[]): Map<string, number> 
   return ranks;
 }
 
-/** Box size from the label: the longest line sets the width, the count the height. */
+/**
+ * Box size from the label: the longest line sets the width, the count the
+ * height. A guess, and a guess at a box; `applyPlan` measures and corrects it.
+ */
 function sizeOf(node: TokenNode): { w: number; h: number } {
   const lines = node.label.length > 0 ? node.label.split("\n") : [""];
   let longest = 0;
