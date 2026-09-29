@@ -800,6 +800,13 @@ UDP port) against a listener on another loopback port:
 | CSP only | the popup's navigation and the STUN datagrams |
 | all three | nothing; every `fetch` rejects with `Failed to fetch` |
 
+DNS has no listener to hear it, so it is read from Chromium's NetLog
+(`--log-net-log`) instead: with no switches, a `fetch` to `leak-<n>.test`
+shows up as a host-resolver job naming that host; with the resolver switch
+alone, or all of them, no resolver event names it. Headless Chrome acted on
+neither `<link rel=dns-prefetch>` nor `preconnect` at all, with or without
+the switches, which is why the probe is a `fetch` rather than a prefetch.
+
 Normal use is unchanged: `run --shot`, `shot`, `export --svg --png` and
 `verify` wrote byte-identical files before and after, `from-mermaid` on the
 eight-node fixture still prints `8 nodes, 9 edges, 1 container, 18 shapes`,

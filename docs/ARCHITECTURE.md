@@ -198,7 +198,7 @@ well as all three together:
 
 | Layer | Where | What only it covers |
 | --- | --- | --- |
-| Chromium switches | `isolationArgs` in `browser.ts` | WebRTC's UDP, which is not a request. A dead proxy (`127.0.0.1:1`) with `<-loopback>` and the page's own `host:port` as the one bypass, every name lookup failing, and `--webrtc-ip-handling-policy=disable_non_proxied_udp` |
+| Chromium switches | `isolationArgs` in `browser.ts` | WebRTC's UDP, which is not a request, and name lookups, checked through the NetLog. A dead proxy (`127.0.0.1:1`) with `<-loopback>` and the page's own `host:port` as the one bypass, every name lookup failing, and `--webrtc-ip-handling-policy=disable_non_proxied_udp` |
 | Request interception | `newIsolatedContext` in `browser.ts` | Navigations, popups and iframes, which CSP cannot refuse. `context.route` aborts any off-origin request after its `request` event fires, `context.routeWebSocket` closes every socket, service workers are blocked |
 | `Content-Security-Policy` | `PAGE_CONTENT_SECURITY_POLICY` in `server.ts` | Serve mode, which opens the human's own browser. `'self'` plus `data:` and `blob:` where the exports need them, `'unsafe-eval'` for `exec` |
 

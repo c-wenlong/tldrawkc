@@ -834,6 +834,13 @@ Measured while building D46, so they are not rediscovered.
 - **`context.routeWebSocket` with no `connectToServer` is a mock, not a
   refusal.** Left alone the page sees an open socket talking to nobody, so the
   handler closes it at once with 1008. The page sees `close`, never `error`.
+- **DNS is checked through the NetLog, and prefetch cannot be the probe.**
+  No listener hears a lookup, so `test/e2e/network.test.ts` launches with
+  `--log-net-log=<file>` and counts `HOST_RESOLVER_*` events naming a
+  `.test` host; the file is only complete after the browser closes. Headless
+  Chrome for Testing 153 performed no lookup at all for `<link
+  rel=dns-prefetch>` or `preconnect`, static or inserted, with or without the
+  switches, so the lookup is driven by a `fetch` to the name.
 - **A snippet that navigates the page ends its own run.** The interception
   aborts `location = 'https://...'`, and the page is left on Chromium's error
   page, so `exec` fails with "Execution context was destroyed". That was true

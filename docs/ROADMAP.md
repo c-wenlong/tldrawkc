@@ -259,10 +259,6 @@ character count still buys is the width the sweep starts from.
   in a mirror tab, so what the header guards is a document whose shapes point
   at a remote URL; a navigation or WebRTC from the mirror page would not be
   stopped.
-- **The DNS half of the block is configured, not measured.**
-  `--host-resolver-rules` should stop a `<link rel=dns-prefetch>` carrying data
-  out in a lookup, but the test suite has no DNS server to watch, so
-  `test/e2e/network.test.ts` checks HTTP, WebSocket and UDP only.
 - **Rendering on Linux has never been eyeballed.** CI runs the end-to-end
   suite there and asserts sizes and labels; nobody has looked at the output.
 - **The mirror tab carries tldraw's watermark.** `serve` mounts the full UI,

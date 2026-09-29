@@ -184,6 +184,29 @@ function expectRefusedInPage(result: Record<string, unknown>): void {
   expect(result.worker).not.toBe("reached");
 }
 
+/**
+ * How many host-resolver events in a Chromium NetLog name `host`.
+ *
+ * A NetLog is `{ constants: { logEventTypes: { NAME: number } }, events: [...] }`,
+ * and a resolver job or request carries the name it was asked for in its
+ * params. Under `MAP * ~NOTFOUND` the name is rewritten before the resolver
+ * sees it, so it never appears there.
+ */
+function resolverEventsNaming(netLog: string, host: string): number {
+  const parsed = JSON.parse(netLog) as {
+    constants: { logEventTypes: Record<string, number> };
+    events: Array<{ type: number; params?: unknown }>;
+  };
+  const resolverTypes = new Set(
+    Object.entries(parsed.constants.logEventTypes)
+      .filter(([name]) => name.startsWith("HOST_RESOLVER"))
+      .map(([, id]) => id),
+  );
+  return parsed.events.filter(
+    (event) => resolverTypes.has(event.type) && JSON.stringify(event.params ?? {}).includes(host),
+  ).length;
+}
+
 describe("the canvas, as a snippet sees it", () => {
   it("reaches nothing but its own origin, and every attempt is on the record", async () => {
     const answer = await withCanvas({}, async (canvas) => {
@@ -289,6 +312,44 @@ describe("each layer on its own", () => {
     await page.goto(server.url);
     await page.evaluate(probeExpression());
     expect(heard).toEqual([]);
+  });
+
+  it("the resolver switch alone keeps a name from ever reaching the resolver", async () => {
+    // DNS is the one way out no listener here can hear, so this reads
+    // Chromium's own NetLog instead. Headless Chrome acted on neither
+    // `dns-prefetch` nor `preconnect` when this was written, so the lookup
+    // is driven by a plain `fetch` to a name, with only the resolver switch
+    // on: no proxy to take the name away first. `.test` is reserved (RFC
+    // 6761), so the control's lookup cannot resolve to anything real.
+    server = await startPageServer({ root: dir, contentSecurityPolicy: null });
+    const resolverOnly = isolationArgs(server.url).filter((arg) =>
+      arg.startsWith("--host-resolver-rules="),
+    );
+    expect(resolverOnly).toHaveLength(1);
+
+    const lookedUp = async (args: string[]): Promise<boolean> => {
+      const log = path.join(dir, `netlog-${String(Date.now())}.json`);
+      const name = `leak-${String(Date.now())}.test`;
+      const launched = await chromium.launch({
+        executablePath,
+        args: [...args, `--log-net-log=${log}`],
+      });
+      try {
+        const page = await launched.newPage();
+        await page.goto(server.url);
+        await page.evaluate(
+          `fetch("http://${name}/", { mode: "no-cors" }).catch(() => undefined)`,
+        );
+      } finally {
+        // The NetLog is only complete once the browser has closed.
+        await launched.close();
+      }
+      return resolverEventsNaming(await fs.readFile(log, "utf8"), name) > 0;
+    };
+
+    expect(await lookedUp([])).toBe(true);
+    expect(await lookedUp(resolverOnly)).toBe(false);
+    expect(await lookedUp(isolationArgs(server.url))).toBe(false);
   });
 
   it("the interception alone stops every request and socket, though not WebRTC", async () => {
