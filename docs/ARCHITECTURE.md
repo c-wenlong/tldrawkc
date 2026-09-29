@@ -182,10 +182,31 @@ returns JSON-safe values so the same surface can back a future MCP entry.
 `null`; `bounds` is the union of all shapes on the page. `meta` is `null` on a
 document that carries none; see "Document metadata" below.
 
-The snippet is trusted local code. It runs with the same power as the
-tldraw offline app's `/exec`: full `editor`, the `helpers` bag from
-[HELPERS.md](HELPERS.md), and the `tldraw` module for `createShapeId`,
-`toRichText` and friends.
+A snippet runs with the same power as the tldraw offline app's `/exec`: full
+`editor`, the `helpers` bag from [HELPERS.md](HELPERS.md), and the `tldraw`
+module for `createShapeId`, `toRichText` and friends. It is not treated as
+trusted, though. The agent that writes it may be reading text it did not write,
+so the page it runs in has no network beyond its own origin; see "The network
+block" below and D46.
+
+## The network block
+
+Every browser the tool launches reaches the page server's own
+`http://127.0.0.1:<port>` and nothing else. Three layers, each measured to
+stand on its own (D46), and `test/e2e/network.test.ts` pins each one alone as
+well as all three together:
+
+| Layer | Where | What only it covers |
+| --- | --- | --- |
+| Chromium switches | `isolationArgs` in `browser.ts` | WebRTC's UDP, which is not a request. A dead proxy (`127.0.0.1:1`) with `<-loopback>` and the page's own `host:port` as the one bypass, every name lookup failing, and `--webrtc-ip-handling-policy=disable_non_proxied_udp` |
+| Request interception | `newIsolatedContext` in `browser.ts` | Navigations, popups and iframes, which CSP cannot refuse. `context.route` aborts any off-origin request after its `request` event fires, `context.routeWebSocket` closes every socket, service workers are blocked |
+| `Content-Security-Policy` | `PAGE_CONTENT_SECURITY_POLICY` in `server.ts` | Serve mode, which opens the human's own browser. `'self'` plus `data:` and `blob:` where the exports need them, `'unsafe-eval'` for `exec` |
+
+`verify`'s harness is served without the header, because a request CSP
+refuses raises no `request` event and `self-contained` counts requests; the
+interception still aborts it, where it can be seen. On the canvas, where the
+header is served, `openCanvasPage` reads Chromium's console line for each CSP
+refusal into `offHostRequests()`, so `doctor`'s audit is not blinded by it.
 
 ## Document metadata
 
@@ -362,10 +383,10 @@ whole collaboration story; there is no sync server and none is planned. See
 ## Layering rules
 
 1. **`src/lib/` and `src/cli/` never import `tldraw`, `react` or `src/page/`.** Those live only in the page bundle. A grep for `from "tldraw"` outside `src/page/` is a failing test.
-2. **`src/page/` never touches the filesystem or the network.** It receives strings and returns strings through the bridge. The only exception is mirror mode's two fetches to `/api/document`.
+2. **`src/page/` never touches the filesystem or the network.** It receives strings and returns strings through the bridge. The only exception is mirror mode's two fetches to `/api/document`. Enforced, not promised: the server mounts no `/api/*` outside serve mode, and the network block (D46) stops any request off the page's own origin.
 3. **`src/cli/index.ts` is the only module that prints.** Everything under `src/lib/` returns data.
 4. **Nothing outside `src/lib/paths.ts` builds a path.** Output locations, temp files and the state of `dist/` all resolve there.
 5. **Every file write is atomic** and goes through `src/lib/files.ts`.
 6. **Every meaningful connection is a bound arrow.** `helpers.connect` is the only way snippets should draw one; the lint pass flags raw arrows with a free end.
 7. **A command never leaves a browser running.** `run`, `shot`, `inspect`, `export`, `from-mermaid`, `new` and `doctor` close Chromium in a `finally`. `serve` is the one long-lived command and exits on SIGINT.
-8. **No network access at runtime.** The page bundle is self-contained, fonts included. `doctor` fails on any request that leaves 127.0.0.1, and on any failed request, which means a `requestfailed` event or a response with status 400 or worse.
+8. **No network access at runtime.** The page bundle is self-contained, fonts included, and the network block (D46) means a request off the page's origin is refused rather than sent. `doctor` fails on any request that tried to leave the page's origin, blocked or not, and on any failed request, which means a `requestfailed` event or a response with status 400 or worse.

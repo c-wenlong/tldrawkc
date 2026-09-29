@@ -371,7 +371,9 @@ that bite:
    repo that installs the tool.
 2. **`src/page/` never touches the filesystem or the network.** It takes
    strings and returns strings through the bridge. Serve mode's two fetches to
-   `/api/document` are the one exception, and they are the whole of it.
+   `/api/document` are the one exception, and they are the whole of it. This
+   is enforced, because a snippet has the page's full power: no `/api/*`
+   outside serve mode, and the network block below (D46).
 3. **`src/cli/index.ts` is the only module that prints.** Everything under
    `src/lib/` returns data. That is why `--json` and the human summary come
    from one call.
@@ -383,7 +385,13 @@ that bite:
    with the bridge answering; `withRasterPage` is a page with no bridge at all,
    which is the only thing `verify` needs.
 7. **No network access at runtime.** The page bundle is self-contained, fonts
-   included.
+   included, and every browser the tool launches can reach the page server's
+   own origin and nothing else (D46): Chromium switches (a dead proxy, no name
+   resolution, no non-proxied WebRTC UDP) from `isolationArgs`, request
+   interception from `newIsolatedContext`, and a `Content-Security-Policy`
+   header from the page server. Launch a browser only through `openCanvasPage`
+   or `openRasterPage`, which apply the first two; a new `chromium.launch`
+   anywhere else is a page with the network back.
 
 ## tldraw gotchas
 
@@ -799,6 +807,37 @@ Collected as they are found, so they are not rediscovered.
   nothing to fight. It still listens on `window` in the capture phase and
   calls `preventDefault`, because the browser's own "save this page" dialog is
   the thing that would otherwise open.
+
+## Network block gotchas
+
+Measured while building D46, so they are not rediscovered.
+
+- **`--webrtc-ip-handling-policy`, not `--force-webrtc-ip-handling-policy`.**
+  The `force-` name looks like the real switch and changed nothing on Chrome
+  for Testing 153: a STUN request to a loopback UDP port still arrived four
+  times per peer connection. The name without `force-` stops it, and a bogus
+  value for it does not, which is how it was confirmed to be the switch doing
+  the work. `test/unit/browser.test.ts` pins the name.
+- **`--host-resolver-rules=MAP * ~NOTFOUND` matches IP literals too.** Without
+  `EXCLUDE 127.0.0.1` the page itself failed with `ERR_NAME_NOT_RESOLVED`.
+- **Chromium never proxies loopback unless told to.** Its bypass list has an
+  implicit loopback rule, so a dead proxy alone leaves every other port on
+  127.0.0.1 reachable. `<-loopback>` removes it, and the page's own
+  `127.0.0.1:<port>` goes back in as the one bypass.
+- **A request CSP refuses raises no `request` event.** Chromium stops a
+  `fetch`, a beacon or a WebSocket before it exists, so the page's request log
+  never sees it; an image or a font does get a `request` and a `requestfailed`
+  with reason `csp`. That is why `verify`'s harness has no header (its
+  `self-contained` check counts requests) and why `openCanvasPage` reads the
+  console line (`Connecting to '<url>' violates the following Content Security
+  Policy directive`) into `offHostRequests()`.
+- **`context.routeWebSocket` with no `connectToServer` is a mock, not a
+  refusal.** Left alone the page sees an open socket talking to nobody, so the
+  handler closes it at once with 1008. The page sees `close`, never `error`.
+- **A snippet that navigates the page ends its own run.** The interception
+  aborts `location = 'https://...'`, and the page is left on Chromium's error
+  page, so `exec` fails with "Execution context was destroyed". That was true
+  before the block too, when the navigation succeeded instead.
 
 ## Where the design lives
 

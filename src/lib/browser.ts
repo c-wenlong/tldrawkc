@@ -480,25 +480,13 @@ export async function openCanvasPage(options: OpenCanvasOptions): Promise<Canvas
   const timeoutMs = options.timeoutMs ?? BRIDGE_TIMEOUT_MS;
   const resolved = await resolveChromium({ flag: options.chromium });
 
-  let browser: Browser;
-  try {
-    browser = await chromium.launch({
-      executablePath: resolved.executablePath,
-      headless: !options.headed,
-    });
-  } catch (error) {
-    throw new EnvironmentError(
-      `could not launch ${resolved.executablePath}: ${(error as Error).message}`,
-      { cause: error },
-    );
-  }
+  const browser = await launchIsolated(resolved.executablePath, options.headed, options.url);
 
-  let context: BrowserContext;
   let page: Page;
   const failed: FailedRequest[] = [];
   const offHost: string[] = [];
   try {
-    context = await browser.newContext({ viewport: { ...VIEWPORT } });
+    const context = await newIsolatedContext(browser, options.url);
     page = await context.newPage();
 
     page.on("requestfailed", (request) => {
@@ -513,8 +501,23 @@ export async function openCanvasPage(options: OpenCanvasOptions): Promise<Canvas
         failed.push({ url: response.url(), reason: `HTTP ${String(response.status())}` });
       }
     });
+    // Once per URL: a request CSP refused can be reported twice, by its
+    // console line and then by the `request` event Chromium still raises for
+    // an image or a font.
+    const noteOffHost = (url: string): void => {
+      if (isOffHost(url, options.url) && !offHost.includes(url)) offHost.push(url);
+    };
     page.on("request", (request) => {
-      if (isOffHost(request.url(), options.url)) offHost.push(request.url());
+      noteOffHost(request.url());
+    });
+    // A `fetch`, beacon or WebSocket the page's CSP refused never happens, so
+    // it raises no `request` event and the line above cannot see it.
+    // Chromium's console line for the refusal is the only trace, and without
+    // it `doctor`'s audit of layering rule 8 would go blind to exactly what
+    // D46 blocks.
+    page.on("console", (message) => {
+      const refused = cspRefusedUrl(message.text());
+      if (refused !== null) noteOffHost(refused);
     });
 
     await page.goto(options.url, { waitUntil: "load", timeout: timeoutMs });
@@ -610,24 +613,13 @@ export async function openRasterPage(options: OpenRasterPageOptions): Promise<Ra
   const timeoutMs = options.timeoutMs ?? BRIDGE_TIMEOUT_MS;
   const resolved = await resolveChromium({ flag: options.chromium });
 
-  let browser: Browser;
-  try {
-    browser = await chromium.launch({
-      executablePath: resolved.executablePath,
-      headless: !options.headed,
-    });
-  } catch (error) {
-    throw new EnvironmentError(
-      `could not launch ${resolved.executablePath}: ${(error as Error).message}`,
-      { cause: error },
-    );
-  }
+  const browser = await launchIsolated(resolved.executablePath, options.headed, options.url);
 
   const failed: FailedRequest[] = [];
   const requested: string[] = [];
   let page: Page;
   try {
-    const context: BrowserContext = await browser.newContext({ viewport: { ...VIEWPORT } });
+    const context = await newIsolatedContext(browser, options.url);
     page = await context.newPage();
 
     page.on("request", (request) => requested.push(request.url()));
@@ -686,7 +678,9 @@ export async function withRasterPage<T>(
 ): Promise<T> {
   let server: PageServer;
   try {
-    server = await startPageServer({ root: options.root });
+    // No CSP on the harness: see `contentSecurityPolicy` in server.ts. The
+    // request interception in `newIsolatedContext` still keeps it offline.
+    server = await startPageServer({ root: options.root, contentSecurityPolicy: null });
   } catch (error) {
     throw new EnvironmentError(`could not serve ${options.root}: ${(error as Error).message}`, {
       cause: error,
@@ -772,6 +766,132 @@ export function isOffHost(requestUrl: string, origin: string): boolean {
   } catch {
     return true;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Keeping the page off the network
+// ---------------------------------------------------------------------------
+
+/**
+ * The proxy every off-origin request is pointed at, which nothing answers.
+ *
+ * Port 1 is on Chromium's restricted-port list and has no listener on any
+ * machine this runs on, so a request routed here fails at connect time. It is
+ * a dead end on purpose: the proxy exists to make "no route out" the default
+ * for anything the request interception below does not see, not to carry
+ * traffic anywhere.
+ */
+export const DEAD_PROXY = "http://127.0.0.1:1";
+
+/**
+ * Chromium switches that take the network away from everything but the page's
+ * own origin (D46).
+ *
+ * The page runs a snippet with the page's full power, and a snippet is written
+ * by an agent that may be reading untrusted text, so what the page can reach is
+ * what that agent can reach. These switches are the floor under
+ * {@link newIsolatedContext}'s request interception, for whatever interception
+ * does not see:
+ *
+ * - `--proxy-server` sends every request to {@link DEAD_PROXY}, and
+ *   `<-loopback>` takes away Chromium's implicit loopback bypass, so another
+ *   port on 127.0.0.1 (a dev server, a database's HTTP port) goes to the dead
+ *   proxy too. The page's own `host:port` is the one bypass.
+ * - `--host-resolver-rules` makes every name lookup fail, so a
+ *   `<link rel=dns-prefetch>` cannot carry data out in a DNS query. The rule
+ *   matches IP literals too (measured: without the `EXCLUDE` the page itself
+ *   failed with `ERR_NAME_NOT_RESOLVED`), so the page's own host is excluded.
+ * - `--webrtc-ip-handling-policy=disable_non_proxied_udp` stops WebRTC
+ *   sending UDP around the proxy, which is the one path neither the proxy nor
+ *   the interception covers: without it a STUN request to a loopback port
+ *   arrived four times per peer connection. Measured on Chrome for Testing
+ *   153: the similar-looking `--force-webrtc-ip-handling-policy` changed
+ *   nothing, so do not "correct" the name.
+ */
+export function isolationArgs(origin: string): string[] {
+  const { host, hostname } = new URL(origin);
+  return [
+    `--proxy-server=${DEAD_PROXY}`,
+    `--proxy-bypass-list=<-loopback>;${host}`,
+    `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE ${hostname}`,
+    "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+  ];
+}
+
+/** Launch Chromium with {@link isolationArgs} for a page served at `origin`. */
+async function launchIsolated(
+  executablePath: string,
+  headed: boolean | undefined,
+  origin: string,
+): Promise<Browser> {
+  try {
+    return await chromium.launch({
+      executablePath,
+      headless: !headed,
+      args: isolationArgs(origin),
+    });
+  } catch (error) {
+    throw new EnvironmentError(`could not launch ${executablePath}: ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
+}
+
+/**
+ * The reason a blocked WebSocket is closed with, as the page sees it.
+ *
+ * 1008 is "policy violation", which is what this is.
+ */
+const WEBSOCKET_BLOCKED = { code: 1008, reason: "tldrawkc: the page has no network" } as const;
+
+/**
+ * A browser context whose pages can reach their own origin and nothing else
+ * (D46).
+ *
+ * Every request is intercepted at the context, so a popup or an iframe is
+ * covered as well as the page, and one whose URL is off the page's origin
+ * (by {@link isOffHost}) is aborted before it is sent. It still raises the
+ * page's `request` event first, which is what keeps `offHostRequests()` and
+ * `verify`'s `self-contained` check honest: a blocked request is still a
+ * request the page tried to make. WebSockets are refused outright, since
+ * nothing the page does needs one. Service workers are blocked because their
+ * fetches are not routed through the context at all.
+ */
+export async function newIsolatedContext(
+  browser: Browser,
+  origin: string,
+): Promise<BrowserContext> {
+  const context = await browser.newContext({
+    viewport: { ...VIEWPORT },
+    serviceWorkers: "block",
+  });
+  await context.route(
+    (url) => isOffHost(url.href, origin),
+    (route) => route.abort("blockedbyclient"),
+  );
+  await context.routeWebSocket(
+    () => true,
+    (socket) => socket.close(WEBSOCKET_BLOCKED),
+  );
+  return context;
+}
+
+/**
+ * The URL in a Chromium console line reporting a CSP refusal, or `null`.
+ *
+ * Chrome 153 writes `Connecting to 'https://...' violates the following
+ * Content Security Policy directive: ...`, with `Loading the image`,
+ * `Loading the font` and so on in place of `Connecting to`; older builds wrote
+ * `Refused to connect to 'https://...' because it violates ...`. Both put the
+ * URL first in single quotes, so the rule is the first quoted string that
+ * starts with a scheme. The same refusal's second line (`Fetch API cannot load
+ * ... document's Content Security Policy`) quotes nothing and is `null`, as is
+ * any line that is not about CSP.
+ */
+export function cspRefusedUrl(text: string): string | null {
+  if (!text.includes("Content Security Policy")) return null;
+  const match = /'([a-z][a-z0-9+.-]*:[^']*)'/i.exec(text);
+  return match?.[1] ?? null;
 }
 
 // ---------------------------------------------------------------------------
