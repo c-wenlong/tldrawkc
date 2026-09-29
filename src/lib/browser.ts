@@ -537,6 +537,23 @@ export async function openCanvasPage(options: OpenCanvasOptions): Promise<Canvas
     });
   }
 
+  // Let the fonts land before any verb measures a label. tldraw starts its
+  // woff2 fetches at mount and carries on, so `ping` can answer while they are
+  // still in flight, and a label measured then is measured in a fallback face
+  // and wraps differently: the mermaid fixture's `page` box came out 64 tall
+  // instead of 92 with the fonts held back 1.5 s, which moved every rank below
+  // it. The race was always there; the request interception (D46) adds a
+  // round trip to every asset and made CI lose it. Awaiting here costs nothing
+  // on a warm run and makes the drawing independent of how fast they load.
+  try {
+    await page.evaluate<string[]>(FONTS_READY_EXPRESSION);
+  } catch (error) {
+    await browser.close().catch(() => undefined);
+    throw new EnvironmentError(`the page's fonts did not settle: ${(error as Error).message}`, {
+      cause: error,
+    });
+  }
+
   return {
     url: options.url,
     version: ping.version,

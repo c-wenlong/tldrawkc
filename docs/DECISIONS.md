@@ -813,6 +813,13 @@ eight-node fixture still prints `8 nodes, 9 edges, 1 container, 18 shapes`,
 `doctor` is ready, and the full end-to-end suite, `serve`'s mirror included,
 passes. Each verb took about 0.05 s longer, the cost of the interception.
 
+That round trip exposed a race that was already there: `ping` can answer
+while tldraw's fonts are still loading, and a label measured then is measured
+in a fallback face. On CI the TD and TB imports of the mermaid fixture came
+back 28 units apart; holding the woff2 responses back 1.5 s reproduced the
+same 28 locally. `openCanvasPage` now awaits `document.fonts.ready` before it
+returns, and with the fonts held back 3 s the layout is the normal one.
+
 **Why three layers:** each is the only one somewhere. The switches are the
 floor under everything, including what interception does not see (WebRTC's
 UDP is not a request). Interception is what stops a navigation, a popup or an

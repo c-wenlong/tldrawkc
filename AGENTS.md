@@ -495,7 +495,13 @@ Collected as they are found, so they are not rediscovered.
   tldraw kicks its woff2 fetches off during mount and carries on, so a
   failed-request snapshot taken when the bridge answers can miss the 404 the
   fonts check exists for. `doctor` awaits `canvas.fontsReady()` first and then
-  names the `tldraw_*` families that actually came back loaded.
+  names the `tldraw_*` families that actually came back loaded. Since D46,
+  `openCanvasPage` also awaits it before returning, because a label measured
+  while the fonts are in flight is measured in a fallback face: with the woff2
+  responses held back 1.5 s, the mermaid fixture's `page` box came out 64 tall
+  instead of 92 and every rank below it moved up 28, which is exactly how
+  `cli-directions`' TD-equals-TB check failed on CI once the interception
+  added a round trip to each asset.
 - **An imprecise arrow binding throws the anchor away.** With
   `isPrecise: false` tldraw ignores `normalizedAnchor` and aims the terminal at
   the shape's centre. Two boxes in a row whose centres differ (which is any row
