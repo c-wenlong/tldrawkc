@@ -545,8 +545,15 @@ export async function openCanvasPage(options: OpenCanvasOptions): Promise<Canvas
   // it. The race was always there; the request interception (D46) adds a
   // round trip to every asset and made CI lose it. Awaiting here costs nothing
   // on a warm run and makes the drawing independent of how fast they load.
+  // Bounded by the same timeout as the bridge: a font that fails settles the
+  // set, but one whose request hangs would hold `ready` open for ever, and
+  // `page.evaluate` has no timeout of its own.
   try {
-    await page.evaluate<string[]>(FONTS_READY_EXPRESSION);
+    await settleWithin(
+      page.evaluate<string[]>(FONTS_READY_EXPRESSION),
+      timeoutMs,
+      `did not finish loading within ${String(timeoutMs)} ms`,
+    );
   } catch (error) {
     await browser.close().catch(() => undefined);
     throw new EnvironmentError(`the page's fonts did not settle: ${(error as Error).message}`, {
@@ -757,6 +764,26 @@ const FONTS_READY_EXPRESSION = `(async () => {
   });
   return [...families].sort();
 })()`;
+
+/**
+ * `promise`, or a rejection with `message` once `ms` have passed.
+ *
+ * The timer is cleared either way, so a promise that settles in time leaves
+ * nothing behind to hold the process open.
+ */
+export async function settleWithin<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(message));
+    }, ms);
+  });
+  try {
+    return await Promise.race([promise, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Everything a failed page load can usefully say, in one message. */
 function bridgeFailureMessage(url: string, error: unknown, failed: FailedRequest[]): string {

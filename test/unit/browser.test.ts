@@ -10,6 +10,7 @@ import {
   isolationArgs,
   isOffHost,
   resolveChromium,
+  settleWithin,
 } from "../../src/lib/browser.js";
 import { EXIT_CODES } from "../../src/lib/errors.js";
 
@@ -148,5 +149,27 @@ describe("cspRefusedUrl", () => {
       ),
     ).toBeNull();
     expect(cspRefusedUrl("Failed to load resource: 'http://x/'")).toBeNull();
+  });
+});
+
+describe("settleWithin", () => {
+  it("hands back a promise that settles in time", async () => {
+    await expect(settleWithin(Promise.resolve(["tldraw_draw"]), 1000, "late")).resolves.toEqual([
+      "tldraw_draw",
+    ]);
+  });
+
+  it("passes a rejection through unchanged", async () => {
+    await expect(settleWithin(Promise.reject(new Error("font 404")), 1000, "late")).rejects.toThrow(
+      "font 404",
+    );
+  });
+
+  it("gives up on one that never settles, rather than waiting for ever", async () => {
+    // A font request that hangs holds `document.fonts.ready` open for good,
+    // and `page.evaluate` has no timeout of its own.
+    await expect(settleWithin(new Promise<never>(() => undefined), 20, "fonts hung")).rejects.toThrow(
+      "fonts hung",
+    );
   });
 });
