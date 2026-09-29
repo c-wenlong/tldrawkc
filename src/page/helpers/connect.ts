@@ -387,7 +387,7 @@ export function makeLine(
     ...(opts.parent !== undefined ? { parentId: toShapeId(opts.parent) } : {}),
     meta: {
       ...opts.meta,
-      lintIgnore: opts.lintIgnore === undefined ? [...LINE_LINT_IGNORE] : opts.lintIgnore === true ? true : [...opts.lintIgnore],
+      lintIgnore: opts.lintIgnore === true ? true : [...(opts.lintIgnore ?? LINE_LINT_IGNORE)],
     },
     props,
   };

@@ -45,7 +45,45 @@ export interface HelperDoc {
   examples: string[];
   /** One entry per `@param` tag, the tag itself stripped. */
   params: string[];
+  /**
+   * The fields of the helper's `opts` parameter. Absent, not empty, for a
+   * helper that takes no options object, so an entry that never had options
+   * reads exactly as it did before the field existed. Generated at build time
+   * by `api-options.ts`.
+   */
+  options?: HelperOptions;
 }
+
+/** What a helper's options object may hold, as `HelperDoc.options` stores it. */
+export interface HelperOptions {
+  /** The parameter's name in the signature. Always `opts` today. */
+  param: string;
+  /** The parameter's type as written in the signature, e.g. `BoxShapesOptions`. */
+  type: string;
+  /** Every field, inherited ones included, in declaration order. */
+  fields: OptionField[];
+}
+
+/** One field of an options object. */
+export interface OptionField {
+  /** The key a snippet writes, e.g. `margin`. */
+  name: string;
+  /** The type as written in the source, e.g. `number` or `ShapeKey | readonly ShapeKey[]`. */
+  type: string;
+  /** Whether the field may be left out. */
+  optional: boolean;
+  /**
+   * The value the code uses when the field is left out, read from the code
+   * rather than the prose. Absent when there is none, or when it depends on
+   * something else (another field, the shapes on the page); `doc` says which.
+   */
+  default?: OptionDefault;
+  /** The field's doc comment on one line, every paragraph kept. Empty if it has none. */
+  doc: string;
+}
+
+/** A default is always a JSON value: a constant is all `api-options.ts` records. */
+export type OptionDefault = string | number | boolean | null | OptionDefault[] | { [key: string]: OptionDefault };
 
 /** A source file as the extractor sees it: a label and its text. */
 export interface SourceFile {
@@ -403,9 +441,14 @@ export async function buildApiReference(options: { sources?: readonly string[]; 
         "directly above its declaration in src/page/helpers/index.ts.",
     );
   }
+  // Loaded here and nowhere else, because it is the one module that needs the
+  // TypeScript compiler, which is a devDependency: the `api` command and every
+  // library import have to keep working in an install that does not have it.
+  const { attachHelperOptions, readOptionSources } = await import("./api-options.js");
+  const withOptions = attachHelperOptions(docs, await readOptionSources(sources, PACKAGE_ROOT));
   const target = options.target ?? API_JSON;
-  await writeText(target, `${JSON.stringify(docs, null, 2)}\n`);
-  return { path: target, count: docs.length, names: docs.map((doc) => doc.name) };
+  await writeText(target, `${JSON.stringify(withOptions, null, 2)}\n`);
+  return { path: target, count: withOptions.length, names: withOptions.map((doc) => doc.name) };
 }
 
 /**

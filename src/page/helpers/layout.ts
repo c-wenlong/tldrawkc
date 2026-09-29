@@ -30,8 +30,9 @@ export interface LineOptions {
   gap?: number;
   /** Alignment on the cross axis, default `start`. */
   align?: Align;
-  /** Where the line begins. Defaults to the first shape's current position. */
+  /** Page x the line begins at. Defaults to the first shape's current x. */
   x?: number;
+  /** Page y the line begins at. Defaults to the first shape's current y. */
   y?: number;
 }
 
@@ -41,8 +42,9 @@ export interface GridOptions {
   gapX?: number;
   /** Vertical gap, default 40. */
   gapY?: number;
-  /** Top-left of the grid. Defaults to the first shape's current position. */
+  /** Page x of the grid's top-left. Defaults to the first shape's current x. */
   x?: number;
+  /** Page y of the grid's top-left. Defaults to the first shape's current y. */
   y?: number;
 }
 

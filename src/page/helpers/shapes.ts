@@ -109,6 +109,8 @@ export interface CenterOptions {
 export interface TextOptions
   extends Omit<BoxOptions, "geo" | "fill" | "align" | "verticalAlign" | "h" | "dash" | "below">,
     CenterOptions {
+  /** Wrap width. Without one the text sizes itself to its content instead of wrapping. */
+  w?: number;
   /** Horizontal alignment of the text itself, default `start`. */
   textAlign?: TLDefaultTextAlignStyle;
   /**
@@ -406,6 +408,10 @@ export function makeText(
 export interface NoteOptions
   extends Omit<BoxOptions, "geo" | "fill" | "dash" | "w" | "h" | "below">,
     CenterOptions {
+  /** Note colour, default `yellow`. */
+  color?: TLDefaultColorStyle;
+  /** Text colour, default `black` whatever `color` is. */
+  labelColor?: TLDefaultColorStyle;
   /**
    * Sit `gap` clear under a shape. One key shares its left edge, the way
    * `box` does; a list uses the union bounds of all of them and centres on it.

@@ -34,6 +34,7 @@ and stays as the place to name the next specified-but-unbuilt verb.
 | `src/lib/meta.ts` | the document metadata: the shape, the `.tldr` JSON surgery, `meta set`, and the SVG stamp. No browser |
 | `src/lib/list.ts` | `list`: a directory of `.tldr` files as data. No browser |
 | `src/lib/api.ts` | the helper reference: a parser over the page's JSDoc, plus the build step that writes `dist/api.json` |
+| `src/lib/api-options.ts` | each helper's option fields and defaults, read with the TypeScript parser. Build time only: loaded by a dynamic `import()`, never statically |
 | `src/lib/errors.ts` | the failures the tool raises on purpose, each carrying its exit code |
 | `src/lib/doctor.ts` | the environment checks, as data |
 | `src/lib/index.ts` | the public API, what `exports["."]` points at |
@@ -332,6 +333,32 @@ is the parameters as written. When a name is documented twice, once on the
 wins: it cannot drift from what runs. `src/lib/paths.ts` owns both the source
 list and where the JSON lands, and `test/unit/api.test.ts` pins every form the
 parser accepts and every near miss it must ignore.
+
+Each helper with an `opts` parameter also gets `options` in the JSON: the
+fields of the type it names and the default the code applies to each.
+`src/lib/api-options.ts` reads them with the TypeScript compiler's parser (no
+type checking, so nothing has to resolve `tldraw`), following imports from
+`index.ts` and following the options into every function they are handed to
+(D45). Two rules follow for the page side:
+
+1. **Write a default as `opts.field ?? fallback`.** That is the only form read,
+   and a fallback shows as a default only when it is a constant: a literal, or
+   a `const` holding one (`DEFAULT_GAP`, `DEFAULT_BOX_SIZE.w`). A fallback to
+   another field or to something on the page shows no default, which is right,
+   and the field's doc comment has to say what happens instead. So does a
+   fallback behind a test of the same field that leaving it out does not
+   certainly pass: `x ?? 0` inside `if (x !== undefined || y !== undefined)`
+   is what `x` is when only `y` was given, not what leaving `x` out means.
+2. **Give every options field a doc comment, and keep any default it names
+   true.** `test/unit/api-options.test.ts` pins every helper's field list and
+   fails on a field with no doc, or a doc that names a different default from
+   the code. A field an options type inherits keeps its base's doc, so a
+   helper whose default differs (a `note` is `yellow`, a `box` is `black`)
+   redeclares the field with its own.
+
+`typescript` is a devDependency, so an install of the tool does not have it.
+`buildApiReference` loads `api-options.ts` with `await import()` and nothing
+imports it statically; `test/unit/layering.test.ts` fails if anything does.
 
 ## Layering rules
 

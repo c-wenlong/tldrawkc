@@ -40,7 +40,7 @@ import {
   type FromMermaidResult,
   type RunResult,
 } from "../lib/canvas.js";
-import { readApiReference, type HelperDoc } from "../lib/api.js";
+import { readApiReference, type HelperDoc, type OptionField } from "../lib/api.js";
 import { list, type ListResult } from "../lib/list.js";
 import { setMeta, type DiagramMeta, type MetaPatch, type SetMetaResult } from "../lib/meta.js";
 import { doctor, type DoctorReport } from "../lib/doctor.js";
@@ -739,7 +739,10 @@ async function runServe(
   return EXIT.ok;
 }
 
-/** One block per helper: the signature, the summary, then each example. */
+/**
+ * One block per helper: the signature, the summary, each example, then the
+ * fields of its options object, one line each with the default after `=`.
+ */
 function printApi(docs: HelperDoc[]): void {
   docs.forEach((doc, index) => {
     if (index > 0) out("");
@@ -749,7 +752,18 @@ function printApi(docs: HelperDoc[]): void {
     for (const example of doc.examples) {
       for (const line of example.split("\n")) out(`  ${line}`);
     }
+    if (doc.options && doc.options.fields.length > 0) {
+      out(`  ${doc.options.param}: ${doc.options.type}`);
+      for (const field of doc.options.fields) out(`    ${optionLine(field)}`);
+    }
   });
+}
+
+/** `margin?: number = 40  Distance from the container's edge ...` */
+function optionLine(field: OptionField): string {
+  const fallback = field.default === undefined ? "" : ` = ${JSON.stringify(field.default)}`;
+  const head = `${field.name}${field.optional ? "?" : ""}: ${field.type}${fallback}`;
+  return field.doc === "" ? head : `${head}  ${field.doc}`;
 }
 
 async function runApi(globals: GlobalOptions): Promise<number> {
