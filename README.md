@@ -554,13 +554,13 @@ layer over it. The pieces worth knowing about:
 
 | Group | What it holds |
 | --- | --- |
-| Browser | `withCanvas`, `openCanvasPage`, `withRasterPage`, `openRasterPage`, `resolveChromium`, `installedBrowserPaths`, `isOffHost`, plus `BRIDGE_TIMEOUT_MS`, `EXEC_TIMEOUT_MS` and `VIEWPORT`. The two `Raster` ones open a page that is not the canvas, which is what `verify` renders an export in |
+| Browser | `withCanvas`, `openCanvasPage`, `withRasterPage`, `openRasterPage`, `resolveChromium`, `installedBrowserPaths`, `isOffHost`, plus `BRIDGE_TIMEOUT_MS`, `EXEC_TIMEOUT_MS` and `VIEWPORT`. The two `Raster` ones open a page that is not the canvas, which is what `verify` renders an export in. `isolationArgs`, `newIsolatedContext`, `cspRefusedUrl` and `DEAD_PROXY` are the network block every one of those pages runs under (D46) |
 | Lints | `hasBlockingLints`, `severityOf` |
 | Metadata | `readMeta`, `readTldrFacts`, `readDocumentMeta`, `applyMeta`, `mergeDocumentMeta`, `validatePatch`, `isEmptyPatch`, `stampSvg`, plus `META_KEY`, `META_VERSION`, `SLUG_PATTERN` and `SVG_TOPIC_ATTRIBUTE`. Pure functions over the file's JSON, so none of them launches a browser |
 | SVG fonts | `subsetSvgFonts`, `findFontFaces`, `spliceFontFaces`, `collectSvgCharacters`, `decodeEntities`, `SAFETY_CHARACTERS` |
 | Verify | `checksFor` and `buildHarness`, the pure halves of `verify`, plus `DEFAULT_VERIFY_WIDTH` and `MAX_VERIFY_HEIGHT`. `checksFor` takes one `SvgObservation` and returns the findings, so the rules can be exercised without a browser |
 | Helper reference | `buildApiReference`, `readApiSources`, `extractHelperDocs`, `selectHelperDocs` |
-| Servers | `startPageServer`, `startServeServer`, `mirrorUrl`, `resolveStaticPath`, `contentTypeFor`, `openInBrowser`, `openCommandFor`, plus `DEFAULT_SERVE_PORT`, `MAX_DOCUMENT_BYTES`, `MIRROR_QUERY`, `CONTENT_TYPES` and `FALLBACK_CONTENT_TYPE` |
+| Servers | `startPageServer`, `startServeServer`, `mirrorUrl`, `resolveStaticPath`, `contentTypeFor`, `openInBrowser`, `openCommandFor`, plus `DEFAULT_SERVE_PORT`, `MAX_DOCUMENT_BYTES`, `MIRROR_QUERY`, `CONTENT_TYPES`, `FALLBACK_CONTENT_TYPE` and `PAGE_CONTENT_SECURITY_POLICY`, the header every served page carries unless the caller passes `contentSecurityPolicy: null` |
 | Paths and files | `resolveTldrPath`, `resolveOutputPath`, `resolveListDir`, `siblingPath`, `tempShotPath`, `tempVerifyPngPath`, `tempSiblingPath`, `relativeToDir`, `doctorProbePath`, `readText`, `writeText`, `writeAtomic`, `writePng`, `modifiedAt`, `newestMtime`, `removeDir`, and the `PACKAGE_ROOT`, `DIST_DIR`, `PAGE_DIST_DIR`, `PAGE_INDEX_HTML`, `PAGE_SRC_DIR`, `HELPERS_SRC_DIR`, `API_JSON`, `API_SOURCE_FILES`, `CLI_ENTRY` and `DEFAULT_LIST_DIR` constants |
 | Doctor | `isFontUrl`, `MINIMUM_NODE_MAJOR` |
 

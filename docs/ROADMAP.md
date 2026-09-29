@@ -253,6 +253,12 @@ chasing it from the inside grew the fixture's decision node to four times the
 width of everything around it before the sweep replaced it. What the parser's
 character count still buys is the width the sweep starts from.
 
+- **Serve mode's network block is the CSP header alone.** `serve` opens the
+  human's own browser, which this process does not launch or intercept, so
+  D46's switches and request interception do not apply there. No snippet runs
+  in a mirror tab, so what the header guards is a document whose shapes point
+  at a remote URL; a navigation or WebRTC from the mirror page would not be
+  stopped.
 - **Rendering on Linux has never been eyeballed.** CI runs the end-to-end
   suite there and asserts sizes and labels; nobody has looked at the output.
 - **The mirror tab carries tldraw's watermark.** `serve` mounts the full UI,

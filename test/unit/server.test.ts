@@ -18,8 +18,10 @@ import {
   contentTypeFor,
   CONTENT_TYPES,
   FALLBACK_CONTENT_TYPE,
+  PAGE_CONTENT_SECURITY_POLICY,
   resolveStaticPath,
   startPageServer,
+  startServeServer,
 } from "../../src/lib/server.js";
 
 describe("content types", () => {
@@ -157,6 +159,75 @@ describe("startPageServer", () => {
     } finally {
       await first.close();
       await second.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the Content-Security-Policy header (D46)", () => {
+  /** Directive name to its sources, from a policy string. */
+  function directives(policy: string): Map<string, string[]> {
+    return new Map(
+      policy
+        .split(";")
+        .map((part) => part.trim().split(/\s+/))
+        .filter((words) => words.length > 0 && words[0] !== "")
+        .map(([name, ...sources]) => [name ?? "", sources]),
+    );
+  }
+
+  it("lets the page reach its own origin and nothing else", () => {
+    const policy = directives(PAGE_CONTENT_SECURITY_POLICY);
+    expect(policy.get("default-src")).toEqual(["'self'"]);
+    for (const [name, sources] of policy) {
+      // No host, no scheme wildcard: a source other than these would be a way
+      // out of 127.0.0.1.
+      for (const source of sources) {
+        expect(["'self'", "'none'", "'unsafe-eval'", "'unsafe-inline'", "data:", "blob:"], `${name} ${source}`).toContain(source);
+      }
+    }
+  });
+
+  it("allows eval for the snippet compiler and no inline script", () => {
+    const scripts = directives(PAGE_CONTENT_SECURITY_POLICY).get("script-src") ?? [];
+    expect(scripts).toContain("'unsafe-eval'");
+    expect(scripts).not.toContain("'unsafe-inline'");
+  });
+
+  it("closes the directives default-src does not cover", () => {
+    const policy = directives(PAGE_CONTENT_SECURITY_POLICY);
+    expect(policy.get("form-action")).toEqual(["'none'"]);
+    expect(policy.get("base-uri")).toEqual(["'none'"]);
+    expect(policy.get("object-src")).toEqual(["'none'"]);
+  });
+
+  it("is on every static file by default, and absent when the caller opts out", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "tldrawkc-csp-"));
+    await fs.writeFile(path.join(dir, "index.html"), "<!doctype html><title>page</title>");
+    const guarded = await startPageServer({ root: dir });
+    const bare = await startPageServer({ root: dir, contentSecurityPolicy: null });
+    try {
+      const withPolicy = await fetch(`${guarded.url}/`);
+      expect(withPolicy.headers.get("content-security-policy")).toBe(PAGE_CONTENT_SECURITY_POLICY);
+      const without = await fetch(`${bare.url}/`);
+      expect(without.headers.get("content-security-policy")).toBeNull();
+    } finally {
+      await guarded.close();
+      await bare.close();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is on serve mode's page, the one place request interception cannot reach", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "tldrawkc-csp-serve-"));
+    await fs.writeFile(path.join(dir, "index.html"), "<!doctype html><title>page</title>");
+    const file = path.join(dir, "diagram.tldr");
+    const server = await startServeServer({ root: dir, file, port: 0 });
+    try {
+      const response = await fetch(server.url);
+      expect(response.headers.get("content-security-policy")).toBe(PAGE_CONTENT_SECURITY_POLICY);
+    } finally {
+      await server.close();
       await fs.rm(dir, { recursive: true, force: true });
     }
   });

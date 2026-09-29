@@ -59,6 +59,47 @@ export const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".txt": "text/plain; charset=utf-8",
 };
 
+/**
+ * The Content-Security-Policy every page this tool serves carries, unless the
+ * caller opts out (D46).
+ *
+ * The browser's own copy of the network block `browser.ts` sets up, and the
+ * only one there is in serve mode, where the page opens in the human's
+ * browser rather than one this process launched and can intercept. It lets
+ * the page load its own bundle and nothing else, each directive for a reason:
+ *
+ * - `script-src 'self' 'unsafe-eval'`: the bundle is one module file, and
+ *   `exec` compiles a snippet with the `AsyncFunction` constructor, which is
+ *   eval as far as CSP is concerned. No `'unsafe-inline'`, since the built
+ *   `index.html` has no inline script.
+ * - `style-src 'self' 'unsafe-inline'`: `index.html` carries one inline
+ *   `<style>`, and tldraw sets inline styles as it renders.
+ * - `img-src`, `font-src`, `media-src`: `data:` and `blob:` as well as
+ *   `'self'`, because the exports rasterise an SVG through a `blob:` URL and
+ *   a document may hold images inlined as `data:` URLs.
+ * - `connect-src 'self' data: blob:`: the fonts and translations are fetched
+ *   from the bundle, the SVG export reads each font back to inline it, and
+ *   serve mode's `/api/document` is same-origin.
+ * - `object-src`, `base-uri` and `form-action` are `'none'` because nothing
+ *   uses them, and a form post or a `<base>` would otherwise be a way out that
+ *   `default-src` does not cover.
+ *
+ * A navigation (`location = ...`, `window.open`) is not something CSP can
+ * refuse; the request interception in `browser.ts` is what stops those.
+ */
+export const PAGE_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data: blob:",
+  "media-src 'self' data: blob:",
+  "connect-src 'self' data: blob:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
 /** The type served for an extension this bundle should not contain. */
 export const FALLBACK_CONTENT_TYPE = "application/octet-stream";
 
@@ -157,6 +198,16 @@ export interface StartPageServerOptions {
   /** Mount the serve-mode routes over this document. Absent for every verb. */
   api?: ServeApiOptions | undefined;
   /**
+   * The `Content-Security-Policy` header on every static file.
+   *
+   * Defaults to {@link PAGE_CONTENT_SECURITY_POLICY}. `null` sends none, which
+   * only `verify`'s harness asks for: a request CSP refuses never happens at
+   * all, so the page's `request` event never fires and `self-contained` would
+   * pass an SVG that reaches for a remote font. The request interception still
+   * stops that request leaving; it just stops it where it can still be seen.
+   */
+  contentSecurityPolicy?: string | null | undefined;
+  /**
    * Retry on a free port when `port` is taken, instead of failing.
    *
    * Only `serve` wants this: it asks for a fixed port as a convenience. A verb
@@ -186,9 +237,13 @@ export async function startPageServer(options: StartPageServerOptions): Promise<
   const host = options.host ?? "127.0.0.1";
   const requested = options.port ?? 0;
   const api = options.api;
+  const csp =
+    options.contentSecurityPolicy === undefined
+      ? PAGE_CONTENT_SECURITY_POLICY
+      : options.contentSecurityPolicy;
 
   const server = http.createServer((request, response) => {
-    handle(root, api, request, response).catch((error: unknown) => {
+    handle(root, api, csp, request, response).catch((error: unknown) => {
       failRequest(response, error);
     });
   });
@@ -317,6 +372,7 @@ export const FAVICON_PATH = "/favicon.ico";
 async function handle(
   root: string,
   api: ServeApiOptions | undefined,
+  csp: string | null,
   request: http.IncomingMessage,
   response: http.ServerResponse,
 ): Promise<void> {
@@ -330,7 +386,7 @@ async function handle(
     endFavicon(request, response);
     return;
   }
-  await serveStatic(root, request, response);
+  await serveStatic(root, csp, request, response);
 }
 
 /** Is there a real file behind this request path? */
@@ -566,6 +622,7 @@ function endJson(
 
 async function serveStatic(
   root: string,
+  csp: string | null,
   request: http.IncomingMessage,
   response: http.ServerResponse,
 ): Promise<void> {
@@ -600,6 +657,7 @@ async function serveStatic(
     // The bundle is rebuilt in place and served to a browser this process
     // just launched. A cached response would be a stale diagram.
     "Cache-Control": "no-store",
+    ...(csp === null ? {} : { "Content-Security-Policy": csp }),
   });
   if (method === "HEAD") {
     response.end();

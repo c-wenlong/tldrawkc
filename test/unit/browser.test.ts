@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   BRIDGE_TIMEOUT_MS,
   ChromiumNotFoundError,
+  cspRefusedUrl,
+  DEAD_PROXY,
   EXEC_TIMEOUT_MS,
   installedBrowserPaths,
+  isolationArgs,
   isOffHost,
   resolveChromium,
+  settleWithin,
 } from "../../src/lib/browser.js";
 import { EXIT_CODES } from "../../src/lib/errors.js";
 
@@ -83,5 +87,89 @@ describe("timeouts", () => {
 describe("ChromiumNotFoundError", () => {
   it("carries the exit code the CLI should use", () => {
     expect(new ChromiumNotFoundError([]).exitCode).toBe(EXIT_CODES.usage);
+  });
+});
+
+describe("isolationArgs", () => {
+  const origin = "http://127.0.0.1:51234";
+  const args = isolationArgs(origin);
+
+  it("sends everything to a proxy nobody answers", () => {
+    expect(args).toContain(`--proxy-server=${DEAD_PROXY}`);
+  });
+
+  it("takes away the implicit loopback bypass and bypasses only the page's own port", () => {
+    // Without <-loopback> Chromium never proxies 127.0.0.1, so a dev server or
+    // a database's HTTP port on another loopback port would still answer.
+    expect(args).toContain("--proxy-bypass-list=<-loopback>;127.0.0.1:51234");
+  });
+
+  it("fails every name lookup except the page's own host", () => {
+    // The rule matches IP literals too, so without the EXCLUDE the page itself
+    // did not load.
+    expect(args).toContain("--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1");
+  });
+
+  it("keeps WebRTC from sending UDP around the proxy, with the switch that was measured to work", () => {
+    expect(args).toContain("--webrtc-ip-handling-policy=disable_non_proxied_udp");
+    expect(args.some((arg) => arg.startsWith("--force-webrtc"))).toBe(false);
+  });
+});
+
+describe("cspRefusedUrl", () => {
+  it("reads the URL out of the line Chrome writes today", () => {
+    expect(
+      cspRefusedUrl(
+        "Connecting to 'http://127.0.0.1:9/x' violates the following Content Security Policy " +
+          "directive: \"connect-src 'self' data: blob:\". The action has been blocked.",
+      ),
+    ).toBe("http://127.0.0.1:9/x");
+    expect(
+      cspRefusedUrl(
+        "Loading the font 'https://example.com/f.woff2' violates the following Content Security " +
+          "Policy directive: \"font-src 'self' data: blob:\". The action has been blocked.",
+      ),
+    ).toBe("https://example.com/f.woff2");
+  });
+
+  it("reads the older wording too", () => {
+    expect(
+      cspRefusedUrl(
+        "Refused to connect to 'wss://example.com/w' because it violates the following Content " +
+          "Security Policy directive: \"connect-src 'self'\".",
+      ),
+    ).toBe("wss://example.com/w");
+  });
+
+  it("ignores the refusal's second line, which quotes no URL, and anything not about CSP", () => {
+    expect(
+      cspRefusedUrl(
+        "Fetch API cannot load http://127.0.0.1:9/x. Refused to connect because it violates the " +
+          "document's Content Security Policy.",
+      ),
+    ).toBeNull();
+    expect(cspRefusedUrl("Failed to load resource: 'http://x/'")).toBeNull();
+  });
+});
+
+describe("settleWithin", () => {
+  it("hands back a promise that settles in time", async () => {
+    await expect(settleWithin(Promise.resolve(["tldraw_draw"]), 1000, "late")).resolves.toEqual([
+      "tldraw_draw",
+    ]);
+  });
+
+  it("passes a rejection through unchanged", async () => {
+    await expect(settleWithin(Promise.reject(new Error("font 404")), 1000, "late")).rejects.toThrow(
+      "font 404",
+    );
+  });
+
+  it("gives up on one that never settles, rather than waiting for ever", async () => {
+    // A font request that hangs holds `document.fonts.ready` open for good,
+    // and `page.evaluate` has no timeout of its own.
+    await expect(settleWithin(new Promise<never>(() => undefined), 20, "fonts hung")).rejects.toThrow(
+      "fonts hung",
+    );
   });
 });
