@@ -67,6 +67,7 @@ tldrawkc/
       fonts.ts            the SVG font subsetter: which characters a document draws, and the @font-face surgery
       font-coverage.ts    which glyphs each bundled woff2 has, read out of its own cmap
       api.ts              the helper reference: a parser over the page's JSDoc, and the build step behind dist/api.json
+      api-options.ts      each helper's option fields and code defaults, via the TypeScript parser. Build time only
       errors.ts           the failures the tool raises on purpose, each carrying its exit code
       browser.ts          launch or connect Chromium, open the page, wait for the bridge, withCanvas
       server.ts           static server for dist/page plus /api/* for serve mode

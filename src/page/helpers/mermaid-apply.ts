@@ -63,7 +63,7 @@ export interface ApplyPlanOptions {
   origin?: { x: number; y: number };
   /** Margin between a subgraph container and its members, default 40. */
   margin?: number;
-  /** Leave the plan's own coordinates alone. Debugging only; expect overlaps. */
+  /** Re-space the ranks against the measured shapes, default `true`. `false` leaves the plan's own coordinates alone: debugging only, expect overlaps. */
   respace?: boolean;
 }
 
@@ -396,7 +396,7 @@ export function applyPlan(
     y: plan.nodes.length > 0 ? Math.min(...plan.nodes.map((node) => node.y)) : 0,
   };
 
-  if (opts.respace !== false && plan.nodes.length > 0) {
+  if ((opts.respace ?? true) && plan.nodes.length > 0) {
     let rankGap = opts.rankGap ?? DEFAULT_APPLY_RANK_GAP;
     let nodeGap = opts.nodeGap ?? DEFAULT_APPLY_NODE_GAP;
     for (let round = 0; round < MAX_RESPACE_ROUNDS; round++) {

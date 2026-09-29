@@ -421,8 +421,9 @@ eroded, so an arrow threaded through a star's notch stays quiet.
 ### The helper reference
 
 `tldrawkc api` prints what a snippet can call, generated from the helpers' own
-JSDoc so the docs and the code cannot drift. `npm run build` regenerates
-`dist/api.json` as part of the build.
+JSDoc so the docs and the code cannot drift, and under each helper the fields
+of its options object with the default the code applies to each. `npm run
+build` regenerates `dist/api.json` as part of the build.
 
 The convention, which the page side has to keep to for a helper to appear:
 

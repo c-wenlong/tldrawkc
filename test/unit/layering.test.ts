@@ -91,3 +91,29 @@ describe("dependencies", () => {
     ]);
   });
 });
+
+describe("build-time only", () => {
+  // `typescript` is a devDependency. `src/lib/api-options.ts` needs its parser
+  // to write `dist/api.json`, and nothing else needs it at all, so the build
+  // step loads that module with a dynamic `import()`. A static import of it
+  // from anywhere would make `tldrawkc api`, and every library import, crash
+  // in an install without devDependencies, which no test run here would see.
+  it("reaches the TypeScript compiler only through a dynamic import of api-options.js", async () => {
+    const roots = [path.join(PACKAGE_ROOT, "src", "lib"), path.join(PACKAGE_ROOT, "src", "cli")];
+    const offenders: string[] = [];
+    for (const root of roots) {
+      for (const file of await tsFilesUnder(root)) {
+        const name = path.relative(PACKAGE_ROOT, file);
+        const source = await fs.readFile(file, "utf8");
+        const staticSpecifiers = [...source.matchAll(/\bfrom\s+["']([^"']+)["']/g)].map((match) => match[1]);
+        if (name !== path.join("src", "lib", "api-options.ts") && staticSpecifiers.includes("typescript")) {
+          offenders.push(`${name} imports "typescript"`);
+        }
+        if (staticSpecifiers.some((specifier) => specifier?.endsWith("/api-options.js"))) {
+          offenders.push(`${name} imports api-options.js statically`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});

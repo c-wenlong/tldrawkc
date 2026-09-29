@@ -698,3 +698,46 @@ comes through unchanged. Without that the sweep would happily widen a rectangle
 to unwrap a two-line label, which is a different opinion about how a diagram
 should look and not this tool's to have. Measured on the 32-node `learn-map`
 fixture: identical bounds and an identical lint list before and after.
+
+## D45. Option fields come from the TypeScript parser, and defaults from `??`
+
+**Verdict:** `api.json` carries each helper's options, generated at build time
+by `src/lib/api-options.ts`, which parses the helper sources with the
+TypeScript compiler's parser. The fields are the members of the type the `opts`
+parameter names, with `extends`, `Omit` and `Pick` applied. A field's default
+is what `opts.field ?? fallback` falls back to, in the helper or in any
+function the options are handed on to, and only when that fallback is a
+constant and every place agrees.
+
+**Why:** the one real studio job spent 11 of its 32 requests grepping this
+repository for `BoxShapesOptions`, `ConnectOptions` and `LineOptions`, because a
+signature says `opts?: BoxShapesOptions` and stops. Hand-written tables drift:
+generating this one found three that already had, a `note` documented as
+`black` that draws `yellow`, a `note` label documented as following `color`
+that is always `black`, and a `text` documented as 180 wide that sizes itself.
+
+**Why a real parser, when `api.ts` is a text parser:** `api.ts` reads one
+convention in one file. This reads interfaces with heritage clauses across
+every helper file, resolves names through imports and re-exports, and follows a value
+through calls and spreads, which done over text is a lexer written badly.
+Parsing only, with no type checker, keeps it fast and means nothing has to
+resolve `tldraw`. The cost is that `typescript`, a devDependency, is needed at
+build time, which it already was (`tsc` is the build). It is not needed at
+run time: the module is loaded by a dynamic `import()` from the build step
+alone, and a layering test fails a static import of it.
+
+**Why defaults from the code, and only from `??`:** the prose already carried
+defaults, and it was the prose that had drifted. Reading the code means the
+default printed is the default that runs. Restricting it to `??` keeps the
+rule one sentence long: `opts.x === undefined ? a : b` and
+`opts.respace !== false` were each tried and each produced a wrong default
+somewhere else (a spread `...(opts.parent !== undefined ? {...} : {})` read as
+"parent defaults to `{}`", and `opts.lintIgnore === true` as "lintIgnore
+defaults to `false`"), so the two sites that used those forms were
+rewritten as `??` instead, with the same behaviour.
+
+**Rejected:** a `@default` tag on each field, which is the same hand-written
+table in a different place; the TypeScript type checker, which would resolve
+`TLDefaultColorStyle` into its values but needs the whole `tldraw` type graph
+loaded to write one JSON file.
+

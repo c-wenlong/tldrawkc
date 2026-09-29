@@ -516,21 +516,62 @@ named function or an interface method signature, and the block carries an
 `@example`. Without an example the entry is dropped, because the point of the
 reference is a line an agent can copy.
 
+A signature names an options type without saying what is in it, so every
+helper with an `opts` parameter also carries `options`: the fields of that
+type, inherited ones included, each with its type as written, whether it is
+optional, its doc comment on one line, and the value the code uses when it is
+left out. Those are read from the helpers' TypeScript at build time as well,
+the types from the interfaces and the defaults from the code, not from the
+prose, so neither can drift from what runs. The human form prints them under
+each helper, one line a field, with the default after `=`.
+
 Output (`--json`) is a bare array, not an object:
 
 ```json
 [
   {
-    "name": "connect",
+    "name": "alignContainers",
     "kind": "function",
     "path": "src/page/helpers/index.ts",
-    "signature": "connect(fromKey, toKey, opts = {})",
-    "summary": "Draw a bound arrow between two shapes and return its id.",
-    "examples": ["helpers.connect('agent', 'page', { label: 'exec' })"],
-    "params": ["fromKey the shape the arrow leaves"]
+    "signature": "alignContainers(keys: readonly ShapeKey[], opts?: AlignContainersOptions): TLShapeId[]",
+    "summary": "Put every listed container on one size and return their ids.",
+    "examples": [
+      "helpers.alignContainers(['container:before', 'container:after'])",
+      "helpers.alignContainers(['left', 'middle', 'right'], { axis: 'y' })"
+    ],
+    "params": [],
+    "options": {
+      "param": "opts",
+      "type": "AlignContainersOptions",
+      "fields": [
+        {
+          "name": "axis",
+          "type": "\"both\" | \"x\" | \"y\"",
+          "optional": true,
+          "doc": "Which axes to match, default `both`.",
+          "default": "both"
+        }
+      ]
+    }
   }
 ]
 ```
+
+| Field | Meaning |
+| --- | --- |
+| `options` | Absent, not empty, for a helper with no `opts` parameter, so such an entry is exactly what it was before the field existed |
+| `options.param` | The parameter's name in the signature. `opts` for every helper today |
+| `options.type` | The parameter's type as written: an interface name, or an inline object type |
+| `options.fields[].name` | The key a snippet writes |
+| `options.fields[].type` | The type as written in the source, whitespace collapsed: `number`, `ShapeKey \| readonly ShapeKey[]`, `BoxOptions["color"]`. A tldraw style type (`TLDefaultColorStyle`) is printed by name and not expanded into its values |
+| `options.fields[].optional` | Whether the field may be left out |
+| `options.fields[].doc` | The field's whole doc comment on one line, `{@link x}` written as `` `x` ``. Empty when it has none |
+| `options.fields[].default` | A JSON value: what `opts.field ?? fallback` falls back to, in the helper or in any function the options are handed on to. **Absent** when the fallback is not a constant (it is another field, or the shapes on the page) or when two places disagree; the doc then says what happens |
+
+The fields are in declaration order, with an inherited field where its base
+declared it and the type's own fields after. A default is only ever read from
+`??`: a helper whose code expresses a default any other way (`=== undefined`,
+a comparison against `false`) shows none, and the fix is to write it as `??`.
 
 `path` is relative to the package root, and it is the one exception to D19.
 Every other path under `--json` names a file the command wrote, where the

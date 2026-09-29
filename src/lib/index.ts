@@ -128,6 +128,9 @@ export {
   selectHelperDocs,
   type BuildApiResult,
   type HelperDoc,
+  type HelperOptions,
+  type OptionDefault,
+  type OptionField,
   type SourceFile,
 } from "./api.js";
 

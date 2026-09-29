@@ -97,6 +97,7 @@ interface ApiJson {
   summary: string;
   examples: string[];
   params: string[];
+  options?: { param: string; type: string; fields: { name: string; type: string; doc: string }[] };
 }
 
 let chromiumPath: string;
@@ -508,6 +509,11 @@ describe("api", () => {
       expect(doc?.summary, `${name} has no summary`).not.toBe("");
       expect(doc?.examples.length ?? 0, `${name} has no @example`).toBeGreaterThan(0);
       expect(doc?.signature).toContain(name);
+      // A signature that takes `opts` says only the type's name, so the
+      // fields have to be in the entry for an agent to know what to pass.
+      if (doc?.signature.includes("opts")) {
+        expect(doc.options?.fields.length ?? 0, `${name} lists no options`).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -526,6 +532,8 @@ describe("api", () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("helpers.box(");
     expect(result.stdout).toContain("helpers.connect(");
+    expect(result.stdout).toContain("  opts: BoxShapesOptions");
+    expect(result.stdout).toContain("    margin?: number = 40");
   });
 });
 
