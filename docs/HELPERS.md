@@ -55,6 +55,10 @@ A standalone text shape for headings and free labels. Same placement
 options as `box`, plus the three below. Words that belong to a shape go in
 that shape's label, not here.
 
+`color` is the colour of the text, `black` by default. There is no
+`labelColor`: a text shape has one colour, and tldraw's text props have no
+second one to put it in.
+
 ### `helpers.note(id, str, opts)`
 
 A sticky note. For asides and "why" callouts in teaching diagrams. A note

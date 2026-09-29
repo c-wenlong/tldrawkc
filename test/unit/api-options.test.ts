@@ -342,7 +342,7 @@ const EXPECTED: Record<string, { type: string; fields: string[] }> = {
   text: {
     type: "TextOptions",
     fields: [
-      "x", "y", "w", "color", "labelColor", "font", "size", "after", "gap", "parent", "meta",
+      "x", "y", "w", "color", "font", "size", "after", "gap", "parent", "meta",
       "centerOn", "above", "textAlign", "below",
     ],
   },
@@ -407,7 +407,7 @@ const NO_DEFAULT: Record<string, string[]> = {
   // `x ?? 0` runs only when one of the two was given; with neither a new
   // shape throws, so 0 is not what leaving them out means.
   box: ["x", "y", "labelColor", "after", "below"],
-  text: ["x", "y", "w", "labelColor"],
+  text: ["x", "y", "w"],
   note: ["x", "y"],
   connect: ["id", "start", "end", "labelColor"],
   boxShapes: ["shapeId", "matchSize"],

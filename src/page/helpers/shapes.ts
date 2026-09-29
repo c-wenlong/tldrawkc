@@ -105,10 +105,20 @@ export interface CenterOptions {
   above?: ShapeKey | readonly ShapeKey[];
 }
 
-/** Options for {@link makeText}. */
+/**
+ * Options for {@link makeText}.
+ *
+ * A text shape is all label and has one colour, so there is no `labelColor`:
+ * tldraw's text props carry `color` and nothing else to set it with.
+ */
 export interface TextOptions
-  extends Omit<BoxOptions, "geo" | "fill" | "align" | "verticalAlign" | "h" | "dash" | "below">,
+  extends Omit<
+      BoxOptions,
+      "geo" | "fill" | "align" | "verticalAlign" | "h" | "dash" | "below" | "labelColor"
+    >,
     CenterOptions {
+  /** Text colour, default `black`. */
+  color?: TLDefaultColorStyle;
   /** Wrap width. Without one the text sizes itself to its content instead of wrapping. */
   w?: number;
   /** Horizontal alignment of the text itself, default `start`. */
