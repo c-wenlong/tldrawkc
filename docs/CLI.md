@@ -566,7 +566,7 @@ Output (`--json`) is a bare array, not an object:
 | `options.fields[].type` | The type as written in the source, whitespace collapsed: `number`, `ShapeKey \| readonly ShapeKey[]`, `BoxOptions["color"]`. A tldraw style type (`TLDefaultColorStyle`) is printed by name and not expanded into its values |
 | `options.fields[].optional` | Whether the field may be left out |
 | `options.fields[].doc` | The field's whole doc comment on one line, `{@link x}` written as `` `x` ``. Empty when it has none |
-| `options.fields[].default` | A JSON value: what `opts.field ?? fallback` falls back to, in the helper or in any function the options are handed on to. **Absent** when the fallback is not a constant (it is another field, or the shapes on the page) or when two places disagree; the doc then says what happens |
+| `options.fields[].default` | A JSON value: what `opts.field ?? fallback` falls back to, in the helper or in any function the options are handed on to. **Absent** when the fallback is not a constant (it is another field, or the shapes on the page), when two places disagree, or when the fallback sits behind a test of that same field that leaving it out does not certainly pass (`x ?? 0` inside `if (x !== undefined \|\| y !== undefined)`); the doc then says what happens |
 
 The fields are in declaration order, with an inherited field where its base
 declared it and the type's own fields after. A default is only ever read from

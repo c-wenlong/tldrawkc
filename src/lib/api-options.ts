@@ -309,7 +309,8 @@ class OptionsReader {
     visited: Set<string>,
   ): void {
     const visitKey = `${module.path}:${String(fn.pos)}:${param}`;
-    if (visited.has(visitKey) || fn.body === undefined) return;
+    const body = fn.body;
+    if (visited.has(visitKey) || body === undefined) return;
     visited.add(visitKey);
 
     const names = new Set([param]);
@@ -349,7 +350,13 @@ class OptionsReader {
           // opts.color ?? 'black'` the fallback read for `labelColor` is
           // `opts.color`, which is not a constant, which is the truth.
           const field = fieldOf(node.left);
-          if (field !== null) record(field, this.evaluate(module, node.right));
+          if (field !== null) {
+            // `if (opts.x !== undefined || opts.y !== undefined) { opts.x ?? 0 }`
+            // is what x is when only y was given. Leaving both out never gets
+            // there (a new box with neither throws), so it is not a default.
+            const reached = reachedWhenOmitted(node, body, field, names);
+            record(field, reached ? this.evaluate(module, node.right) : { constant: false });
+          }
         }
       }
 
@@ -357,7 +364,7 @@ class OptionsReader {
 
       ts.forEachChild(node, visit);
     };
-    ts.forEachChild(fn.body, visit);
+    ts.forEachChild(body, visit);
   }
 
   /** Follow a call that passes the options on, into the callee's own parameter. */
@@ -631,6 +638,103 @@ function optionFieldOf(expression: ts.Expression, names: ReadonlySet<string>): s
   if (!ts.isPropertyAccessExpression(node)) return null;
   const owner = unwrap(node.expression);
   return ts.isIdentifier(owner) && names.has(owner.text) ? node.name.text : null;
+}
+
+/**
+ * Whether `node` is certainly reached when `field` is left out, as far as the
+ * tests around it go: the condition of each enclosing `if` or `? :` up to the
+ * function body `stop` that reads the field is worked out with the field
+ * `undefined` and everything else unknown. A test that does not read the field
+ * does not decide whether leaving it out reaches the fallback, so it is passed
+ * over; a test that reads it and cannot be settled (`opts.x !== undefined ||
+ * opts.y !== undefined`) means the fallback is not the default.
+ */
+function reachedWhenOmitted(node: ts.Node, stop: ts.Node, field: string, names: ReadonlySet<string>): boolean {
+  let child: ts.Node = node;
+  for (let parent = node.parent; parent !== undefined && child !== stop; parent = parent.parent) {
+    let test: ts.Expression | null = null;
+    let onTrueSide = false;
+    if (ts.isIfStatement(parent) && child !== parent.expression) {
+      test = parent.expression;
+      onTrueSide = child === parent.thenStatement;
+    } else if (ts.isConditionalExpression(parent) && child !== parent.condition) {
+      test = parent.condition;
+      onTrueSide = child === parent.whenTrue;
+    }
+    if (test !== null && mentionsField(test, field, names)) {
+      const value = whenOmitted(test, field, names);
+      if (value === null || value !== onTrueSide) return false;
+    }
+    child = parent;
+  }
+  return true;
+}
+
+/**
+ * A test's value with `opts.field` undefined, or `null` when that does not
+ * settle it. Kleene logic over `!`, `&&` and `||`, and strict or loose
+ * comparison of the field with `undefined`, `null` or a literal.
+ */
+function whenOmitted(test: ts.Expression, field: string, names: ReadonlySet<string>): boolean | null {
+  const node = unwrap(test);
+  if (optionFieldOf(node, names) === field) return false;
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+    const inner = whenOmitted(node.operand, field, names);
+    return inner === null ? null : !inner;
+  }
+  if (!ts.isBinaryExpression(node)) return null;
+  const operator = node.operatorToken.kind;
+  if (operator === ts.SyntaxKind.AmpersandAmpersandToken || operator === ts.SyntaxKind.BarBarToken) {
+    const left = whenOmitted(node.left, field, names);
+    const right = whenOmitted(node.right, field, names);
+    if (operator === ts.SyntaxKind.AmpersandAmpersandToken) {
+      if (left === false || right === false) return false;
+      return left === true && right === true ? true : null;
+    }
+    if (left === true || right === true) return true;
+    return left === false && right === false ? false : null;
+  }
+  const strictEqual = operator === ts.SyntaxKind.EqualsEqualsEqualsToken;
+  const strictUnequal = operator === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const looseEqual = operator === ts.SyntaxKind.EqualsEqualsToken;
+  const looseUnequal = operator === ts.SyntaxKind.ExclamationEqualsToken;
+  if (!strictEqual && !strictUnequal && !looseEqual && !looseUnequal) return null;
+  const other =
+    optionFieldOf(node.left, names) === field
+      ? unwrap(node.right)
+      : optionFieldOf(node.right, names) === field
+        ? unwrap(node.left)
+        : null;
+  if (other === null) return null;
+  const isUndefined = ts.isIdentifier(other) && other.text === "undefined";
+  const isNull = other.kind === ts.SyntaxKind.NullKeyword;
+  const isLiteral =
+    ts.isStringLiteral(other) ||
+    ts.isNumericLiteral(other) ||
+    ts.isNoSubstitutionTemplateLiteral(other) ||
+    other.kind === ts.SyntaxKind.TrueKeyword ||
+    other.kind === ts.SyntaxKind.FalseKeyword;
+  let equal: boolean;
+  if (isUndefined) equal = true;
+  else if (isNull) equal = looseEqual || looseUnequal;
+  else if (isLiteral) equal = false;
+  else return null;
+  return strictEqual || looseEqual ? equal : !equal;
+}
+
+/** Whether `test` reads `opts.field`, under any name the options go by. */
+function mentionsField(test: ts.Expression, field: string, names: ReadonlySet<string>): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isExpression(node) && optionFieldOf(node, names) === field) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(test);
+  return found;
 }
 
 /** The observations for one field, as its default, or `undefined` for none. */

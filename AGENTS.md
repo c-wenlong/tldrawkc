@@ -345,7 +345,10 @@ type checking, so nothing has to resolve `tldraw`), following imports from
    and a fallback shows as a default only when it is a constant: a literal, or
    a `const` holding one (`DEFAULT_GAP`, `DEFAULT_BOX_SIZE.w`). A fallback to
    another field or to something on the page shows no default, which is right,
-   and the field's doc comment has to say what happens instead.
+   and the field's doc comment has to say what happens instead. So does a
+   fallback behind a test of the same field that leaving it out does not
+   certainly pass: `x ?? 0` inside `if (x !== undefined || y !== undefined)`
+   is what `x` is when only `y` was given, not what leaving `x` out means.
 2. **Give every options field a doc comment, and keep any default it names
    true.** `test/unit/api-options.test.ts` pins every helper's field list and
    fails on a field with no doc, or a doc that names a different default from

@@ -707,7 +707,12 @@ TypeScript compiler's parser. The fields are the members of the type the `opts`
 parameter names, with `extends`, `Omit` and `Pick` applied. A field's default
 is what `opts.field ?? fallback` falls back to, in the helper or in any
 function the options are handed on to, and only when that fallback is a
-constant and every place agrees.
+constant, every place agrees, and leaving the field out certainly reaches it.
+The last condition is worked out from the `if` and `? :` tests around the
+fallback that read the same field, with the field `undefined`: `box`'s
+`opts.x ?? 0` sits inside `if (opts.x !== undefined || opts.y !== undefined)`,
+which that does not settle, so `x` shows no default rather than a `0` that a
+new box with neither coordinate would never get (it throws).
 
 **Why:** the one real studio job spent 11 of its 32 requests grepping this
 repository for `BoxShapesOptions`, `ConnectOptions` and `LineOptions`, because a

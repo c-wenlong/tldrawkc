@@ -131,6 +131,10 @@ export interface BoxOptions extends Omit<Placement, "below">, Pick<Extra, "tag">
   y?: number;
   /** A let, which can change. */
   z?: number;
+  /** Only defaulted once the code has checked whether it was given. */
+  left?: number;
+  /** Defaulted on the other side of a test about something else. */
+  top?: number;
   /** Seen twice with two values. */
   size?: "s" | "m";
   /** Ignore list. */
@@ -157,6 +161,9 @@ export function makeBox(editor: Editor, key: string, label: string, settings: Bo
     size: settings.size ?? "s",
     other: sizeAgain(settings),
     ignore: [...(settings.ignore ?? [...IGNORED, "extra"])],
+    corner: settings.left !== undefined || settings.top !== undefined ? { left: settings.left ?? 0 } : null,
+    top: key === "" ? 0 : (settings.top ?? 5),
+    muted: settings.ignore === true ? [] : [...(settings.ignore ?? [...IGNORED, "extra"])],
   });
 }
 
@@ -237,6 +244,8 @@ describe("attachHelperOptions over fixtures", () => {
       "x",
       "y",
       "z",
+      "left",
+      "top",
       "size",
       "ignore",
     ]);
@@ -264,7 +273,9 @@ describe("attachHelperOptions over fixtures", () => {
     expect(box.get("h")?.default).toBe(64); // the same, by element access
     expect(box.get("color")?.default).toBe("black"); // a literal
     expect(box.get("gap")?.default).toBe(120); // followed into `place`, then a re-export
-    expect(box.get("ignore")?.default).toEqual(["a", "b", "extra"]); // spread of a const array
+    // A spread of a const array, seen twice: once plain, and once on the side
+    // of `settings.ignore === true` that leaving it out certainly reaches.
+    expect(box.get("ignore")?.default).toEqual(["a", "b", "extra"]);
     expect(docs.get("line")?.options?.fields[0]?.default).toBe(-0.5); // through `as`
   });
 
@@ -285,6 +296,10 @@ describe("attachHelperOptions over fixtures", () => {
     expect(box.get("z")).not.toHaveProperty("default");
     // `s` in makeBox, `m` in sizeAgain.
     expect(box.get("size")).not.toHaveProperty("default");
+    // Only reached once the code knows `left` or `top` was given.
+    expect(box.get("left")).not.toHaveProperty("default");
+    // Guarded too, but by a test that is not about `top`.
+    expect(box.get("top")?.default).toBe(5);
     // `opts.force === true` is a comparison, not a default.
     expect(fieldsOf(docs.get("clear")?.options).get("force")).not.toHaveProperty("default");
   });
@@ -389,8 +404,11 @@ const DEFAULTS: Record<string, Record<string, unknown>> = {
 
 /** Fields whose default depends on something else, so a constant would be a lie. */
 const NO_DEFAULT: Record<string, string[]> = {
-  box: ["labelColor", "after", "below"],
-  text: ["w", "labelColor"],
+  // `x ?? 0` runs only when one of the two was given; with neither a new
+  // shape throws, so 0 is not what leaving them out means.
+  box: ["x", "y", "labelColor", "after", "below"],
+  text: ["x", "y", "w", "labelColor"],
+  note: ["x", "y"],
   connect: ["id", "start", "end", "labelColor"],
   boxShapes: ["shapeId", "matchSize"],
   row: ["x", "y"],
