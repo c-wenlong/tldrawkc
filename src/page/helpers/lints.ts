@@ -8,10 +8,10 @@
  * which is where the browser's own text measurement happens, is
  * `collectLintRecords` in `helpers/read.ts`.
  *
- * All nine rules live here: the six from HELPERS.md (`friendless-arrow`,
+ * All ten rules live here: the six from HELPERS.md (`friendless-arrow`,
  * `overlapping-text`, `overlapping-shapes`, `off-page`, `empty-label` and
- * `unreadable-label`), plus `arrow-crosses-shape`, `missing-glyph` and
- * `missing-topic`. `missing-glyph` and `missing-topic` are the two warnings
+ * `unreadable-label`), plus `arrow-crosses-shape`, `line-crosses-label`,
+ * `missing-glyph` and `missing-topic`. `missing-glyph` and `missing-topic` are the two warnings
  * rather than errors, and `missing-topic` is the only rule that reads the
  * document instead of the page.
  *
@@ -89,10 +89,11 @@ export interface LintShape {
    */
   parentId?: string;
   /**
-   * The arrow's rendered path in page coordinates, as the vertices tldraw's
-   * own geometry reports: the two ends of a straight arrow, the corners of an
-   * elbow route, or an arc sampled into a polyline. Arrows only, and absent
-   * when the geometry could not be read.
+   * The rendered path in page coordinates, as the vertices tldraw's own
+   * geometry reports: the two ends of a straight arrow, the corners of an
+   * elbow route, an arc sampled into a polyline, or the points of a `line`
+   * shape. Arrows and lines only, and absent when the geometry could not be
+   * read.
    */
   points?: readonly { x: number; y: number }[];
   /**
@@ -104,6 +105,17 @@ export interface LintShape {
    * which is right whenever the shape is a rectangle.
    */
   outline?: readonly { x: number; y: number }[];
+  /**
+   * Where the label's words actually are, in page coordinates: one box per
+   * rendered line of text, plus the bridges {@link textBoxesFromLines} puts
+   * between neighbouring lines, each as four corners and none of it the
+   * padding around the words. Read by `line-crosses-label`, and only measured
+   * on a shape some line's path comes near, because on a geo or a text shape it
+   * costs the most expensive text measurement the pass makes. Corners rather
+   * than rectangles so a rotated label keeps its shape. Absent means nobody
+   * measured it, and the rule skips the shape.
+   */
+  textBoxes?: readonly (readonly { x: number; y: number }[])[];
   /** The fill style (`none`, `solid`, ...). Geo shapes only. */
   fill?: string;
   /**
@@ -166,6 +178,7 @@ export interface LintBinding {
 export const LINT_RULES = [
   "friendless-arrow",
   "arrow-crosses-shape",
+  "line-crosses-label",
   "overlapping-text",
   "overlapping-shapes",
   "off-page",
@@ -220,6 +233,23 @@ export const OVERLAP_AREA_FRACTION = 0.1;
  * for.
  */
 export const ARROW_CROSSING_TOLERANCE = 4;
+
+/**
+ * How far inside a label's text box a line has to run before
+ * `line-crosses-label` fires, in page units.
+ *
+ * The box is the lines of text at their full line height, so its top and
+ * bottom few units are leading, not letters: at the default size a line of
+ * `draw` text is about 30 units tall and the glyphs start about 4 units below
+ * its top. A stroke centred there puts half its width on the tops of the
+ * tallest letters and no more. 4 is the same number as
+ * {@link ARROW_CROSSING_TOLERANCE}, arrived at the same way, and it is on
+ * depth rather than length: a leader that clips the corner of a box of text
+ * stays silent, and one through the middle of a word fires however short the
+ * word is. It does not reach the label's padding at all, which is the space
+ * between the words and the outline and is where a line is allowed to run.
+ */
+export const LABEL_CROSSING_TOLERANCE = 4;
 
 /** Slack on `unreadable-label`, in page units, to absorb sub-pixel measurement. */
 const LABEL_WIDTH_TOLERANCE = 1;
@@ -943,6 +973,200 @@ export function arrowCrossesShape(
   return lints;
 }
 
+/** How many bindings each arrow has, keyed by the arrow and then the end. */
+function terminalsOf(bindings: readonly LintBinding[]): Map<string, Map<string, string>> {
+  const terminals = new Map<string, Map<string, string>>();
+  for (const binding of bindings) {
+    if (binding.type !== "arrow") continue;
+    const terminal = binding.props?.terminal;
+    if (terminal !== "start" && terminal !== "end") continue;
+    let ends = terminals.get(binding.fromId);
+    if (!ends) {
+      ends = new Map<string, string>();
+      terminals.set(binding.fromId, ends);
+    }
+    ends.set(terminal, binding.toId);
+  }
+  return terminals;
+}
+
+/**
+ * The shapes `line-crosses-label` walks: every `line` shape, and every arrow
+ * that is not bound at both ends, each with a path of at least one leg.
+ *
+ * An arrow bound at both ends is a connection, and a connection through a
+ * shape is already `arrow-crosses-shape`'s finding, so it is left out rather
+ * than reported twice. What is left is exactly what that rule never sees:
+ * `helpers.line` and `helpers.stub`, which mute it by default (D37), a loose
+ * arrow, and tldraw's own `line` shape, which is not an arrow at all.
+ *
+ * Exported because the reader asks the same question first, to decide which
+ * labels are worth measuring.
+ */
+export function unboundStrokes(
+  shapes: readonly LintShape[],
+  bindings: readonly LintBinding[],
+): LintShape[] {
+  const terminals = terminalsOf(bindings);
+  return shapes.filter((shape) => {
+    if (shape.type !== "arrow" && shape.type !== "line") return false;
+    if (!shape.points || shape.points.length < 2) return false;
+    if (isLintIgnored(shape, "line-crosses-label")) return false;
+    return shape.type === "line" || (terminals.get(shape.id)?.size ?? 0) < 2;
+  });
+}
+
+/** The axis-aligned page box around a set of points, or `null` for none. */
+export function boundsOfPoints(points: readonly Point[]): Rect | null {
+  if (points.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/**
+ * Does any leg of `points` come near enough to `rect` that it might cross it?
+ *
+ * The cheap first question the reader asks before measuring a label, so it is
+ * deliberately generous: the rectangle is the shape's whole page box, and a
+ * leg that only touches its edge counts.
+ */
+export function pathTouchesRect(points: readonly Point[], rect: Rect): boolean {
+  const grown = { x: rect.x - 1, y: rect.y - 1, w: rect.w + 2, h: rect.h + 2 };
+  return pathCrossesRect(points, grown);
+}
+
+/**
+ * The boxes a label's words occupy, given one rectangle per rendered line.
+ *
+ * One box per line rather than one around them all, because a label that
+ * wraps into lines of different lengths leaves empty space beside the short
+ * ones, and a leader through that space touches no word. But the lines alone
+ * leave a gap: the browser measures each line's glyph box, which is shorter
+ * than the line height, so a stroke running between two lines would sit on
+ * the edge of both and cross neither. So each pair of neighbouring lines also
+ * gets a bridge, from the middle of one to the middle of the next and as wide
+ * as the part the two lines share. A stroke between two lines of words is
+ * inside it; one beside the shorter line is not.
+ *
+ * Only lines that follow one another are bridged. A blank line in a label has
+ * no glyphs, so it arrives as no rectangle at all, and bridging across it
+ * would count an empty row as words. What tells the two apart is the gap: two
+ * lines in a row are separated by the leading alone, a few units, and a blank
+ * line between them leaves a whole line's height. So a pair is bridged only
+ * when the gap is under half the shorter line's height.
+ *
+ * Lines are taken top to bottom; a line with no width or height is dropped.
+ */
+export function textBoxesFromLines(lines: readonly Rect[]): Rect[] {
+  const rows = lines.filter((line) => line.w > 0 && line.h > 0).sort((a, b) => a.y - b.y);
+  const boxes: Rect[] = [...rows];
+  for (let i = 1; i < rows.length; i++) {
+    const above = rows[i - 1];
+    const below = rows[i];
+    if (!above || !below) continue;
+    const from = Math.max(above.x, below.x);
+    const to = Math.min(above.x + above.w, below.x + below.w);
+    const gap = below.y - (above.y + above.h);
+    if (gap >= Math.min(above.h, below.h) / 2) continue;
+    const top = above.y + above.h / 2;
+    const bottom = below.y + below.h / 2;
+    if (to > from && bottom > top) boxes.push({ x: from, y: top, w: to - from, h: bottom - top });
+  }
+  return boxes;
+}
+
+/** A label's text for a message, cut short so one long label cannot bury the rest. */
+function quoted(text: string): string {
+  const flat = text.replace(/\s+/gu, " ").trim();
+  return flat.length > 40 ? `"${flat.slice(0, 39)}…"` : `"${flat}"`;
+}
+
+/**
+ * `line-crosses-label`: a line drawn through somebody's words.
+ *
+ * `arrow-crosses-shape` stops at connections, and `helpers.line` and
+ * `helpers.stub` mute it by default because an axis runs through things on
+ * purpose (D37). That left every unbound mark free to run straight through a
+ * label, which is how a timeline's dashed leader ended up striking out
+ * "2017: The Transformer" with nothing in the lint pass to say so: the label
+ * wrapped, the box grew down with `growY`, and the leader drawn to where the
+ * box used to end now started inside the text.
+ *
+ * The test is against the words, not the shape. A leader is supposed to reach
+ * the box it labels and may run inside its outline or its padding; what a
+ * reader cannot get past is a stroke through the letters. So the targets are
+ * `textBoxes`, the lines of text the reader sees (see
+ * {@link textBoxesFromLines}), each eroded by {@link LABEL_CROSSING_TOLERANCE},
+ * and the path has to cross what is left of one of them.
+ *
+ * Which lines: see {@link unboundStrokes}. Which labels: any shape whose text
+ * box was measured, which is geo, note and text shapes and the labels of other
+ * arrows. Exempt: the line's own label, a shape a half-bound arrow is bound to,
+ * and either side carrying this rule in `meta.lintIgnore`.
+ *
+ * An error, like `arrow-crosses-shape` and `overlapping-text`, because a word
+ * with a line through it is the same failure as two words on top of each
+ * other. It can only fire on a line drawn over text, so a diagram that was
+ * fine before this rule stays fine.
+ */
+export function lineCrossesLabel(
+  shapes: readonly LintShape[],
+  bindings: readonly LintBinding[],
+): Lint[] {
+  const strokes = unboundStrokes(shapes, bindings);
+  if (strokes.length === 0) return [];
+  const terminals = terminalsOf(bindings);
+
+  const labelled = shapes.filter(
+    (shape) =>
+      shape.textBoxes !== undefined &&
+      shape.textBoxes.length > 0 &&
+      (shape.text ?? "").trim().length > 0 &&
+      !isLintIgnored(shape, "line-crosses-label"),
+  );
+
+  // Does any leg reach more than the tolerance inside this one box of words?
+  const crosses = (points: readonly Point[], box: readonly Point[]): boolean => {
+    if (box.length < 3) return false;
+    const around = boundsOfPoints(box);
+    if (!around) return false;
+    const inner = insetRect(around, LABEL_CROSSING_TOLERANCE);
+    if (!inner || !pathCrossesRect(points, inner)) return false;
+    return pathReachesInside(points, box, true, inner, LABEL_CROSSING_TOLERANCE);
+  };
+
+  const lints: Lint[] = [];
+  for (const stroke of strokes) {
+    const points = stroke.points;
+    if (!points) continue;
+    const bound = new Set(terminals.get(stroke.id)?.values() ?? []);
+    for (const target of labelled) {
+      if (target.id === stroke.id) continue;
+      if (bound.has(target.id)) continue;
+      const boxes = target.textBoxes ?? [];
+      if (!boxes.some((box) => crosses(points, box))) continue;
+      lints.push({
+        rule: "line-crosses-label",
+        shapeIds: [stroke.id, target.id],
+        message:
+          `${stroke.id} runs through the text of ${target.id} (${quoted(target.text ?? "")}). ` +
+          `End it at the shape's edge, read from helpers.describe() after the label is set, since a ` +
+          `label that wraps makes its box taller; or move the line or the label clear of each other`,
+      });
+    }
+  }
+  return lints;
+}
+
 /**
  * `overlapping-text`: two labels sitting on top of each other.
  *
@@ -1293,6 +1517,7 @@ export function runLints(
   return [
     ...friendlessArrows(shapes, bindings),
     ...arrowCrossesShape(shapes, bindings),
+    ...lineCrossesLabel(shapes, bindings),
     ...overlappingText(shapes),
     ...overlappingShapes(shapes),
     ...offPage(shapes),

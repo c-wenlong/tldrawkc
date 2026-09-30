@@ -85,7 +85,7 @@ tldrawkc/
         layout.ts         row, column, grid, boxShapes, alignContainers, translate, fitCamera
         mermaid.ts        parseMermaid(source) -> Plan, pure, no editor in scope
         mermaid-apply.ts  applyPlan(plan) -> shapes, which needs the editor
-        lints.ts          the nine rules
+        lints.ts          the ten rules
         read.ts           plainText, describe (the inspect summary)
         meta.ts           helpers.meta, the page half of the metadata rules
         font-coverage.ts  the generated glyph table missing-glyph checks against

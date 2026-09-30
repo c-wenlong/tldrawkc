@@ -481,10 +481,15 @@ export function createHelpers(editor: Editor): HelpersHandle {
   }
 
   /**
-   * Run the lint pass over the current page and return the findings. Eight
-   * shape rules: `friendless-arrow`, `arrow-crosses-shape`, `overlapping-text`,
-   * `overlapping-shapes`, `off-page`, `empty-label`, `unreadable-label` and
-   * `missing-glyph`, plus `missing-topic` on the document.
+   * Run the lint pass over the current page and return the findings. Nine
+   * shape rules: `friendless-arrow`, `arrow-crosses-shape`,
+   * `line-crosses-label`, `overlapping-text`, `overlapping-shapes`,
+   * `off-page`, `empty-label`, `unreadable-label` and `missing-glyph`, plus
+   * `missing-topic` on the document.
+   *
+   * `line-crosses-label` is the one `line` and `stub` are not muted for: it
+   * fires when an unbound line runs through the words of a label, such as a
+   * leader drawn to where a box ended before its label wrapped and grew it.
    *
    * `missing-glyph` is a warning: it fires when a label asks for a character
    * its font has no glyph for, such as Greek or a set-theory sign in the

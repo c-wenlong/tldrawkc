@@ -62,7 +62,8 @@ helpers.line('rule', 120, 760, 1000, 760, { head: 'both', dash: 'dashed', label:
 `line` is an unbound mark between two page points, for an axis, a tick, a
 vector or a rule. It mutes `friendless-arrow` and `arrow-crosses-shape`,
 because neither means anything for a line that was never claiming to join two
-shapes. `connect` remains the only way to draw a real connection.
+shapes. It is still held to `line-crosses-label`, so a line can cross a shape
+but not its words. `connect` remains the only way to draw a real connection.
 
 `matchSize` on `boxShapes`, and `alignContainers` for three or more, grow every
 container to the largest width and the largest height in the set, each keeping
@@ -374,12 +375,13 @@ vector-and-linear-algebra-basics     43  yes  vector-as-a-list-of-numbers.tldr
 ### The lint pass
 
 `run`, `inspect` and `from-mermaid` all report it, and a finding at error level
-is exit code 3. Nine rules:
+is exit code 3. Ten rules:
 
 | Rule | Fires when |
 | --- | --- |
 | `friendless-arrow` | An arrow has no binding at one or both ends |
 | `arrow-crosses-shape` | An arrow's rendered path runs through a geo or note shape that is neither of the two it connects |
+| `line-crosses-label` | A line, or an arrow not bound at both ends, runs through the words of a label: the text itself, not the shape's outline or padding |
 | `overlapping-text` | Two text-bearing shapes' label boxes intersect |
 | `overlapping-shapes` | Two shapes intersect by more than a tenth of the smaller one's area |
 | `off-page` | A shape sits further than 10000 page units from the origin |
@@ -590,7 +592,7 @@ landed, so it says why as well as what.
 | [DECISIONS.md](docs/DECISIONS.md) | The forty-three calls already made, each with its verdict and the reason, so none of them is relitigated |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The package layout, the Node to browser bridge, one command end to end, serve mode, and the eight layering rules |
 | [CLI.md](docs/CLI.md) | Every command, flag, `--json` shape and exit code. The contract other tools parse |
-| [HELPERS.md](docs/HELPERS.md) | The `helpers` bag a snippet can call, and what each of the nine lint rules fires on |
+| [HELPERS.md](docs/HELPERS.md) | The `helpers` bag a snippet can call, and what each of the ten lint rules fires on |
 | [ROADMAP.md](docs/ROADMAP.md) | Seven phases with checklists, the five that are done, and the gaps still known and open |
 | [PRIOR-ART.md](docs/PRIOR-ART.md) | What tldraw actually supports, the tools that already exist, and what was checked and ruled out, with a source per claim |
 

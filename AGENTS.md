@@ -858,7 +858,7 @@ Measured while building D46, so they are not rediscovered.
 the calls already made, [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
 package layout and the bridge, [CLI.md](docs/CLI.md) for every command, flag,
 JSON shape and exit code, [HELPERS.md](docs/HELPERS.md) for the snippet
-vocabulary and the nine lint rules, [ROADMAP.md](docs/ROADMAP.md) for the
+vocabulary and the ten lint rules, [ROADMAP.md](docs/ROADMAP.md) for the
 phase checklists and the known gaps, and [PRIOR-ART.md](docs/PRIOR-ART.md) for
 what was checked and ruled out. Those files are the contract. Tick a roadmap
 item in the PR that completes it, and record a decision there when you make
