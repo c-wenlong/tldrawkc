@@ -27,6 +27,7 @@ import {
   heightForLabel,
   pathTouchesRect,
   runLints,
+  textBoxesFromLines,
   unboundStrokes,
   usableWidthAtBand,
 } from "./lints.js";
@@ -90,6 +91,14 @@ const LABEL_FONT_SIZES: Record<TLDefaultSizeStyle, number> = {
   m: 1.375,
   l: 1.625,
   xl: 2,
+};
+
+/** The same table for free `text` shapes, which tldraw sizes larger again. */
+const FONT_SIZES: Record<TLDefaultSizeStyle, number> = {
+  s: 1.125,
+  m: 1.5,
+  l: 2.25,
+  xl: 2.75,
 };
 
 /** The same table for arrow labels, which tldraw sizes slightly differently. */
@@ -261,18 +270,22 @@ interface LabelLine {
 }
 
 /**
- * The lines a geo label renders as, laid out by the browser at the shape's
- * own width, or `undefined` when there is no text to lay out.
+ * The lines a label renders as, laid out by the browser at the shape's own
+ * width, or `undefined` when there is no text to lay out.
  *
- * Positions are against the measurement element, which sits one
- * `LABEL_PADDING` inside the shape on the left whatever the alignment is (see
- * {@link labelInkOf}). Whitespace spans are dropped, because a trailing space
- * is not ink, and spans are grouped into lines by their top edge.
+ * A geo label by default, whose positions are against the measurement element,
+ * which sits one `LABEL_PADDING` inside the shape on the left whatever the
+ * alignment is (see {@link labelInkOf}). A free `text` shape has no padding,
+ * its own size table and its alignment in `textAlign`, so `textShape` swaps
+ * all three and its positions are the shape's own. Whitespace spans are
+ * dropped, because a trailing space is not ink, and spans are grouped into
+ * lines by their top edge.
  */
 function labelLinesOf(
   editor: Editor,
   shape: TLShape,
   boundsWidth: number,
+  textShape = false,
 ): LabelLine[] | undefined {
   const text = plainTextOf(editor, shape);
   if (text.trim().length === 0) return undefined;
@@ -281,17 +294,18 @@ function labelLinesOf(
   if (size === undefined || font === undefined) return undefined;
 
   const theme = editor.getCurrentTheme();
+  const align = propOf<TLDefaultHorizontalAlignStyle>(shape, textShape ? "textAlign" : "align");
   const spans = editor.textMeasure.measureTextSpans(text, {
     overflow: "wrap",
     width: boundsWidth,
     height: Math.max(1, boundsWidth),
-    padding: LABEL_PADDING,
-    fontSize: theme.fontSize * LABEL_FONT_SIZES[size],
+    padding: textShape ? 0 : LABEL_PADDING,
+    fontSize: theme.fontSize * (textShape ? FONT_SIZES[size] : LABEL_FONT_SIZES[size]),
     fontWeight: TEXT_PROPS.fontWeight,
     fontStyle: TEXT_PROPS.fontStyle,
     fontFamily: getFontFamily(theme, font),
     lineHeight: theme.lineHeight,
-    textAlign: propOf<TLDefaultHorizontalAlignStyle>(shape, "align") ?? "middle",
+    textAlign: align ?? (textShape ? "start" : "middle"),
   });
 
   // Keyed on the top edge, which is what puts two spans on the same line.
@@ -331,9 +345,20 @@ function toPageCorners(
   });
 }
 
+/** A label's lines, as rectangles in the shape's own space. */
+function lineRects(
+  lines: readonly LabelLine[],
+  dx: number,
+  dy: number,
+): { x: number; y: number; w: number; h: number }[] {
+  return lines.map((line) => ({ x: dx + line.from, y: dy + line.top, w: line.to - line.from, h: line.bottom - line.top }));
+}
+
 /**
- * The box a shape's words occupy, as four page-space corners, or `undefined`
- * when the shape has no text or no label to measure. For `line-crosses-label`.
+ * Where a shape's words are, as page-space corners of one box per rendered
+ * line plus the bridges between them ({@link textBoxesFromLines}), or
+ * `undefined` when the shape has no text or no label to measure. For
+ * `line-crosses-label`.
  *
  * Not the label rectangle tldraw's geometry reports, which is the text plus a
  * padding on every side and, on a geo, never narrower than 100 units: a tick
@@ -346,18 +371,23 @@ function toPageCorners(
  *   element's padding and down it by the label rectangle's centre, which is
  *   where tldraw centres the block whichever `verticalAlign` put the
  *   rectangle there.
- * - **text**: the shape itself, whose geometry is its text with no padding.
+ * - **text**: the same measurement with the text shape's own size table, no
+ *   padding and its `textAlign`, from the shape's top. A fixed-width caption
+ *   is wider than its words, and the space beside them is not text.
  * - **note** and **arrow** labels: the label rectangle less the padding tldraw
  *   put around the text, since a note scales its font to fit and an arrow
  *   label is sized to its text already.
  */
-function textBoxOf(editor: Editor, shape: TLShape): { x: number; y: number }[] | undefined {
+function textBoxesOf(editor: Editor, shape: TLShape): { x: number; y: number }[][] | undefined {
   if (plainTextOf(editor, shape).trim().length === 0) return undefined;
   const geometry = editor.getShapeGeometry(shape);
+  const corners = (rects: { x: number; y: number; w: number; h: number }[]) =>
+    textBoxesFromLines(rects).map((rect) => toPageCorners(editor, shape, rect));
 
   if (shape.type === "text") {
-    const box = geometry.bounds;
-    return toPageCorners(editor, shape, { x: box.minX, y: box.minY, w: box.width, h: box.height });
+    const lines = labelLinesOf(editor, shape, geometry.bounds.width, true);
+    if (lines === undefined) return undefined;
+    return corners(lineRects(lines, geometry.bounds.minX, geometry.bounds.minY));
   }
 
   if (!isGroup(geometry)) return undefined;
@@ -367,29 +397,18 @@ function textBoxOf(editor: Editor, shape: TLShape): { x: number; y: number }[] |
   if (shape.type === "geo") {
     const lines = labelLinesOf(editor, shape, geometry.bounds.width);
     if (lines === undefined) return undefined;
-    const from = Math.min(...lines.map((line) => line.from));
-    const to = Math.max(...lines.map((line) => line.to));
-    const height = Math.max(...lines.map((line) => line.bottom)) - Math.min(...lines.map((line) => line.top));
-    if (!(to > from) || !(height > 0)) return undefined;
+    const top = Math.min(...lines.map((line) => line.top));
+    const height = Math.max(...lines.map((line) => line.bottom)) - top;
+    if (!(height > 0)) return undefined;
     const middle = label.bounds.minY + label.bounds.height / 2;
-    return toPageCorners(editor, shape, {
-      x: LABEL_PADDING + from,
-      y: middle - height / 2,
-      w: to - from,
-      h: height,
-    });
+    return corners(lineRects(lines, LABEL_PADDING, middle - height / 2 - top));
   }
 
   const padding = shape.type === "arrow" ? ARROW_LABEL_PADDING : LABEL_PADDING;
   const w = label.bounds.width - padding * 2;
   const h = label.bounds.height - padding * 2;
   if (!(w > 0) || !(h > 0)) return undefined;
-  return toPageCorners(editor, shape, {
-    x: label.bounds.minX + padding,
-    y: label.bounds.minY + padding,
-    w,
-    h,
-  });
+  return corners([{ x: label.bounds.minX + padding, y: label.bounds.minY + padding, w, h }]);
 }
 
 /**
@@ -662,8 +681,8 @@ export function collectLintRecords(editor: Editor): {
         (stroke) => stroke.id !== record.id && stroke.points !== undefined && pathTouchesRect(stroke.points, bounds),
       );
       if (!near) return;
-      const box = textBoxOf(editor, shape);
-      if (box) record.textBox = box;
+      const boxes = textBoxesOf(editor, shape);
+      if (boxes) record.textBoxes = boxes;
     });
   }
   return { shapes, bindings };

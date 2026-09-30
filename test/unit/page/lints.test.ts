@@ -23,6 +23,7 @@ import {
   LABEL_CROSSING_TOLERANCE,
   lineCrossesLabel,
   pathTouchesRect,
+  textBoxesFromLines,
   unboundStrokes,
   isLintIgnored,
   LINT_RULES,
@@ -498,7 +499,7 @@ const TRANSFORMER: LintShape = {
   type: "geo",
   text: "2017: The Transformer",
   bounds: { x: 0, y: 60, w: 200, h: 126 },
-  textBox: textAt(30, 90, 140, 80),
+  textBoxes: [textAt(30, 90, 140, 80)],
 };
 const leader = (id: string, points: { x: number; y: number }[], extra: Partial<LintShape> = {}): LintShape => ({
   id,
@@ -565,10 +566,10 @@ describe("line-crosses-label", () => {
   });
 
   it("checks text shapes and other arrows' labels, never a line's own label", () => {
-    const caption: LintShape = { id: "shape:cap", type: "text", text: "t0", textBox: textAt(90, 220, 20, 24) };
+    const caption: LintShape = { id: "shape:cap", type: "text", text: "t0", textBoxes: [textAt(90, 220, 20, 24)] };
     const labelled = leader("shape:axis", [{ x: 0, y: 232 }, { x: 400, y: 232 }], {
       text: "time",
-      textBox: textAt(180, 220, 40, 24),
+      textBoxes: [textAt(180, 220, 40, 24)],
     });
     const lints = lineCrossesLabel([caption, labelled], []);
     expect(lints.map((lint) => lint.shapeIds)).toEqual([["shape:axis", "shape:cap"]]);
@@ -583,7 +584,7 @@ describe("line-crosses-label", () => {
       { x: 100, y: 200 },
       { x: 0, y: 100 },
     ];
-    const turned: LintShape = { id: "shape:turned", type: "geo", text: "rotated", textBox: diamond };
+    const turned: LintShape = { id: "shape:turned", type: "geo", text: "rotated", textBoxes: [diamond] };
     const corner = leader("shape:corner", [{ x: 0, y: 20 }, { x: 40, y: -20 }]);
     const middle = leader("shape:middle", [{ x: 0, y: 100 }, { x: 200, y: 100 }]);
     expect(lineCrossesLabel([turned, corner], [])).toEqual([]);
@@ -607,7 +608,7 @@ describe("line-crosses-label", () => {
   });
 
   it("skips a label nobody measured, an empty one, and a line with no path", () => {
-    const unmeasured: LintShape = { ...TRANSFORMER, textBox: undefined };
+    const unmeasured: LintShape = { ...TRANSFORMER, textBoxes: undefined };
     const blank: LintShape = { ...TRANSFORMER, text: "  " };
     const through = leader("shape:lead", [{ x: 100, y: 0 }, { x: 100, y: 300 }]);
     expect(lineCrossesLabel([unmeasured, through], [])).toEqual([]);
@@ -615,10 +616,62 @@ describe("line-crosses-label", () => {
     expect(lineCrossesLabel([TRANSFORMER, { id: "shape:bare", type: "line" }], [])).toEqual([]);
   });
 
+  it("reads a ragged label line by line: beside the short line is empty space", () => {
+    // "2017: The" over "Transformer": the first line is narrower, so x = 50
+    // runs beside it and through only the second, and x = 35 through neither.
+    const rows = textBoxesFromLines([
+      { x: 60, y: 90, w: 80, h: 26 },
+      { x: 30, y: 120, w: 140, h: 26 },
+    ]);
+    const ragged: LintShape = { ...TRANSFORMER, textBoxes: rows.map((rect) => corners(rect)) };
+    const above = leader("shape:above", [{ x: 50, y: 60 }, { x: 50, y: 118 }]);
+    const into = leader("shape:into", [{ x: 50, y: 60 }, { x: 50, y: 135 }]);
+    const between = leader("shape:between", [{ x: 0, y: 118 }, { x: 200, y: 118 }]);
+    expect(lineCrossesLabel([ragged, above], [])).toEqual([]);
+    expect(lineCrossesLabel([ragged, into], [])).toHaveLength(1);
+    expect(lineCrossesLabel([ragged, between], [])).toHaveLength(1);
+  });
+
+  it("reports a line once per label, however many of its lines it crosses", () => {
+    const rows = textBoxesFromLines([
+      { x: 30, y: 90, w: 140, h: 26 },
+      { x: 30, y: 120, w: 140, h: 26 },
+    ]);
+    const tall: LintShape = { ...TRANSFORMER, textBoxes: rows.map((rect) => corners(rect)) };
+    expect(lineCrossesLabel([tall, leader("shape:lead", [{ x: 100, y: 0 }, { x: 100, y: 300 }])], [])).toHaveLength(1);
+  });
+
   it("cuts a long label short in the message", () => {
     const long: LintShape = { ...TRANSFORMER, text: "a label that goes on and on well past forty characters" };
     const [lint] = lineCrossesLabel([long, leader("shape:lead", [{ x: 100, y: 0 }, { x: 100, y: 300 }])], []);
     expect(lint?.message).toContain('"a label that goes on and on well past f…"');
+  });
+});
+
+describe("textBoxesFromLines", () => {
+  it("keeps each line and bridges neighbours across the part they share", () => {
+    const boxes = textBoxesFromLines([
+      { x: 30, y: 120, w: 140, h: 26 },
+      { x: 60, y: 90, w: 80, h: 26 },
+    ]);
+    expect(boxes).toEqual([
+      { x: 60, y: 90, w: 80, h: 26 },
+      { x: 30, y: 120, w: 140, h: 26 },
+      { x: 60, y: 103, w: 80, h: 30 },
+    ]);
+  });
+
+  it("builds no bridge between lines that share no width, and drops empty lines", () => {
+    expect(
+      textBoxesFromLines([
+        { x: 0, y: 0, w: 40, h: 20 },
+        { x: 100, y: 24, w: 40, h: 20 },
+        { x: 0, y: 50, w: 0, h: 20 },
+      ]),
+    ).toEqual([
+      { x: 0, y: 0, w: 40, h: 20 },
+      { x: 100, y: 24, w: 40, h: 20 },
+    ]);
   });
 });
 
@@ -1403,7 +1456,7 @@ describe("runLints over every rule", () => {
       geo("shape:b", { x: 50, y: 0, w: 100, h: 100 }),
       geo("shape:blank", { x: 900, y: 0, w: 100, h: 60 }, { text: "" }),
       geo("shape:far", { x: 99999, y: 0, w: 100, h: 60 }),
-      { ...TRANSFORMER, bounds: { x: 2000, y: 60, w: 200, h: 126 }, textBox: textAt(2030, 90, 140, 80) },
+      { ...TRANSFORMER, bounds: { x: 2000, y: 60, w: 200, h: 126 }, textBoxes: [textAt(2030, 90, 140, 80)] },
       leader("shape:lead", [{ x: 2100, y: 140 }, { x: 2100, y: 300 }]),
     ];
     const seen = runLints(shapes, []).map((lint) => lint.rule);

@@ -876,11 +876,17 @@ than 100 units wide, so a tick label `t0` sits in a rectangle four times its
 own width; testing that would fail lines that touch no word. So `read.ts`
 measures the lines with `measureTextSpans`, the same layout
 `unreadable-label` reads, and places them across the shape by the label
-padding and down it by the centre of tldraw's label rectangle. Checked by
+padding and down it by the centre of tldraw's label rectangle. Each line is
+its own box, since one box around a label whose lines differ in length would
+count the space beside the short ones; the browser measures a line shorter
+than the line height, so `textBoxesFromLines` adds a bridge between
+neighbouring lines across the width they share, and a stroke between two lines
+of words still fires. Checked by
 sweeping probe lines across a two-line label in a real Chrome: the rule fired
 from the tops of the capitals to the baseline and nowhere else. A text shape
-is its own text box, since its geometry has no padding; a note's and an
-arrow's labels are their label rectangles less the padding tldraw put there.
+is measured the same way with its own size table and no padding, because a
+fixed wrap width can be far wider than its words; a note's and an arrow's
+labels are their label rectangles less the padding tldraw put there.
 
 **Why 4:** the text box includes each line's leading, about 4 units above and
 below at the default size, so a stroke centred 4 units in has half its width

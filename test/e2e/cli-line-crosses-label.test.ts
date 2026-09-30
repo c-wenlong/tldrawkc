@@ -104,6 +104,19 @@ describe("line-crosses-label", () => {
     expect(inspect.code).toBe(0);
   }, 60_000);
 
+  it("reads the words line by line, so empty space beside them is not text", async () => {
+    // A ragged label and a fixed-width caption, each with a line through the
+    // space the words leave and a control through the words themselves. Only
+    // the controls fire.
+    // Sorted, because a reloaded page lists its shapes in index order rather
+    // than in the order the snippet drew them.
+    const { lints } = await drawn("ragged-and-wide.js");
+    expect(lints.map((lint) => [lint.rule, lint.shapeIds.join(" ")]).sort()).toEqual([
+      ["line-crosses-label", "shape:struck shape:caption"],
+      ["line-crosses-label", "shape:through shape:ragged"],
+    ]);
+  }, 60_000);
+
   it("fails tldraw's own line shape struck through a text caption", async () => {
     const { run, lints } = await drawn("native-line-through-text.js");
     expect(run.code).toBe(3);

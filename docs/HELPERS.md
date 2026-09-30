@@ -471,10 +471,14 @@ because an axis runs through things on purpose (D37), and that let a
 timeline's dashed leader run straight through "2017: The Transformer": the
 label wrapped, the box grew down with `growY`, and the leader drawn from where
 the box was declared to end started inside the words. So the rule tests the
-words themselves. The text box is the lines the browser lays the label out as,
-not tldraw's label rectangle, which on a geo is padded and never narrower than
-100 units; a line may run inside an outline or through its padding, and only a
-stroke through the letters fires. The same 4-unit depth as
+words themselves: one box per line the browser lays the label out as, plus a
+bridge between neighbouring lines so a stroke between two lines of words still
+counts. Not tldraw's label rectangle, which on a geo is padded and never
+narrower than 100 units, and not one box around every line, which would count
+the space beside a short line; a fixed-width text shape is measured the same
+way, since its words need not fill its width. A line may run inside an outline,
+through its padding or through that empty space, and only a stroke through the
+letters fires. The same 4-unit depth as
 `arrow-crosses-shape` applies, and at the default size it is the leading above
 and below a line of text, so a probe line fires from the tops of the capitals
 to the baseline and nowhere else. It is an error, and not muted by `line`'s

@@ -106,14 +106,16 @@ export interface LintShape {
    */
   outline?: readonly { x: number; y: number }[];
   /**
-   * The box the label's words actually occupy, in page coordinates, as four
-   * corners: the lines of text and nothing of the padding around them. Read by
-   * `line-crosses-label`, and only measured on a shape some line's path comes
-   * near, because on a geo it costs the most expensive text measurement the
-   * pass makes. Four corners rather than a rectangle so a rotated label keeps
-   * its shape. Absent means nobody measured it, and the rule skips the shape.
+   * Where the label's words actually are, in page coordinates: one box per
+   * rendered line of text, plus the bridges {@link textBoxesFromLines} puts
+   * between neighbouring lines, each as four corners and none of it the
+   * padding around the words. Read by `line-crosses-label`, and only measured
+   * on a shape some line's path comes near, because on a geo or a text shape it
+   * costs the most expensive text measurement the pass makes. Corners rather
+   * than rectangles so a rotated label keeps its shape. Absent means nobody
+   * measured it, and the rule skips the shape.
    */
-  textBox?: readonly { x: number; y: number }[];
+  textBoxes?: readonly (readonly { x: number; y: number }[])[];
   /** The fill style (`none`, `solid`, ...). Geo shapes only. */
   fill?: string;
   /**
@@ -1042,6 +1044,37 @@ export function pathTouchesRect(points: readonly Point[], rect: Rect): boolean {
   return pathCrossesRect(points, grown);
 }
 
+/**
+ * The boxes a label's words occupy, given one rectangle per rendered line.
+ *
+ * One box per line rather than one around them all, because a label that
+ * wraps into lines of different lengths leaves empty space beside the short
+ * ones, and a leader through that space touches no word. But the lines alone
+ * leave a gap: the browser measures each line's glyph box, which is shorter
+ * than the line height, so a stroke running between two lines would sit on
+ * the edge of both and cross neither. So each pair of neighbouring lines also
+ * gets a bridge, from the middle of one to the middle of the next and as wide
+ * as the part the two lines share. A stroke between two lines of words is
+ * inside it; one beside the shorter line is not.
+ *
+ * Lines are taken top to bottom; a line with no width or height is dropped.
+ */
+export function textBoxesFromLines(lines: readonly Rect[]): Rect[] {
+  const rows = lines.filter((line) => line.w > 0 && line.h > 0).sort((a, b) => a.y - b.y);
+  const boxes: Rect[] = [...rows];
+  for (let i = 1; i < rows.length; i++) {
+    const above = rows[i - 1];
+    const below = rows[i];
+    if (!above || !below) continue;
+    const from = Math.max(above.x, below.x);
+    const to = Math.min(above.x + above.w, below.x + below.w);
+    const top = above.y + above.h / 2;
+    const bottom = below.y + below.h / 2;
+    if (to > from && bottom > top) boxes.push({ x: from, y: top, w: to - from, h: bottom - top });
+  }
+  return boxes;
+}
+
 /** A label's text for a message, cut short so one long label cannot bury the rest. */
 function quoted(text: string): string {
   const flat = text.replace(/\s+/gu, " ").trim();
@@ -1061,9 +1094,10 @@ function quoted(text: string): string {
  *
  * The test is against the words, not the shape. A leader is supposed to reach
  * the box it labels and may run inside its outline or its padding; what a
- * reader cannot get past is a stroke through the letters. So the target is
- * `textBox`, the lines of text the reader sees, eroded by
- * {@link LABEL_CROSSING_TOLERANCE}, and the path has to cross what is left.
+ * reader cannot get past is a stroke through the letters. So the targets are
+ * `textBoxes`, the lines of text the reader sees (see
+ * {@link textBoxesFromLines}), each eroded by {@link LABEL_CROSSING_TOLERANCE},
+ * and the path has to cross what is left of one of them.
  *
  * Which lines: see {@link unboundStrokes}. Which labels: any shape whose text
  * box was measured, which is geo, note and text shapes and the labels of other
@@ -1085,11 +1119,21 @@ export function lineCrossesLabel(
 
   const labelled = shapes.filter(
     (shape) =>
-      shape.textBox !== undefined &&
-      shape.textBox.length >= 3 &&
+      shape.textBoxes !== undefined &&
+      shape.textBoxes.length > 0 &&
       (shape.text ?? "").trim().length > 0 &&
       !isLintIgnored(shape, "line-crosses-label"),
   );
+
+  // Does any leg reach more than the tolerance inside this one box of words?
+  const crosses = (points: readonly Point[], box: readonly Point[]): boolean => {
+    if (box.length < 3) return false;
+    const around = boundsOfPoints(box);
+    if (!around) return false;
+    const inner = insetRect(around, LABEL_CROSSING_TOLERANCE);
+    if (!inner || !pathCrossesRect(points, inner)) return false;
+    return pathReachesInside(points, box, true, inner, LABEL_CROSSING_TOLERANCE);
+  };
 
   const lints: Lint[] = [];
   for (const stroke of strokes) {
@@ -1099,13 +1143,8 @@ export function lineCrossesLabel(
     for (const target of labelled) {
       if (target.id === stroke.id) continue;
       if (bound.has(target.id)) continue;
-      const box = target.textBox;
-      if (!box) continue;
-      const around = boundsOfPoints(box);
-      if (!around) continue;
-      const inner = insetRect(around, LABEL_CROSSING_TOLERANCE);
-      if (!inner || !pathCrossesRect(points, inner)) continue;
-      if (!pathReachesInside(points, box, true, inner, LABEL_CROSSING_TOLERANCE)) continue;
+      const boxes = target.textBoxes ?? [];
+      if (!boxes.some((box) => crosses(points, box))) continue;
       lints.push({
         rule: "line-crosses-label",
         shapeIds: [stroke.id, target.id],
