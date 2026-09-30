@@ -106,8 +106,9 @@ describe("line-crosses-label", () => {
 
   it("reads the words line by line, so empty space beside them is not text", async () => {
     // A ragged label and a fixed-width caption, each with a line through the
-    // space the words leave and a control through the words themselves. Only
-    // the controls fire.
+    // space the words leave and a control through the words themselves, and a
+    // line across the blank row of a heading over a subheading. Only the
+    // controls fire.
     // Sorted, because a reloaded page lists its shapes in index order rather
     // than in the order the snippet drew them.
     const { lints } = await drawn("ragged-and-wide.js");

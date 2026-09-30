@@ -661,6 +661,20 @@ describe("textBoxesFromLines", () => {
     ]);
   });
 
+  it("builds no bridge across a blank line, which leaves a whole line's gap", () => {
+    // "heading", a blank line, "subheading": 26-tall lines, the blank one
+    // arriving as nothing, so the two that are left sit 30 units apart.
+    expect(
+      textBoxesFromLines([
+        { x: 20, y: 0, w: 100, h: 26 },
+        { x: 10, y: 56, w: 120, h: 26 },
+      ]),
+    ).toEqual([
+      { x: 20, y: 0, w: 100, h: 26 },
+      { x: 10, y: 56, w: 120, h: 26 },
+    ]);
+  });
+
   it("builds no bridge between lines that share no width, and drops empty lines", () => {
     expect(
       textBoxesFromLines([

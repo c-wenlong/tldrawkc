@@ -1057,6 +1057,13 @@ export function pathTouchesRect(points: readonly Point[], rect: Rect): boolean {
  * as the part the two lines share. A stroke between two lines of words is
  * inside it; one beside the shorter line is not.
  *
+ * Only lines that follow one another are bridged. A blank line in a label has
+ * no glyphs, so it arrives as no rectangle at all, and bridging across it
+ * would count an empty row as words. What tells the two apart is the gap: two
+ * lines in a row are separated by the leading alone, a few units, and a blank
+ * line between them leaves a whole line's height. So a pair is bridged only
+ * when the gap is under half the shorter line's height.
+ *
  * Lines are taken top to bottom; a line with no width or height is dropped.
  */
 export function textBoxesFromLines(lines: readonly Rect[]): Rect[] {
@@ -1068,6 +1075,8 @@ export function textBoxesFromLines(lines: readonly Rect[]): Rect[] {
     if (!above || !below) continue;
     const from = Math.max(above.x, below.x);
     const to = Math.min(above.x + above.w, below.x + below.w);
+    const gap = below.y - (above.y + above.h);
+    if (gap >= Math.min(above.h, below.h) / 2) continue;
     const top = above.y + above.h / 2;
     const bottom = below.y + below.h / 2;
     if (to > from && bottom > top) boxes.push({ x: from, y: top, w: to - from, h: bottom - top });

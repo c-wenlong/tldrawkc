@@ -881,7 +881,9 @@ its own box, since one box around a label whose lines differ in length would
 count the space beside the short ones; the browser measures a line shorter
 than the line height, so `textBoxesFromLines` adds a bridge between
 neighbouring lines across the width they share, and a stroke between two lines
-of words still fires. Checked by
+of words still fires. A blank line has no glyphs and arrives as no line at
+all, so lines are only bridged when the gap between them is the leading and
+not a missing row. Checked by
 sweeping probe lines across a two-line label in a real Chrome: the rule fired
 from the tops of the capitals to the baseline and nowhere else. A text shape
 is measured the same way with its own size table and no padding, because a

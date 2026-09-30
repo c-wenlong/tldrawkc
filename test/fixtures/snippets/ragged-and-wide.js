@@ -16,4 +16,10 @@ helpers.line('through', box.x + 30, box.y + box.h + 30, box.x + 30, middle + 15)
 helpers.text('caption', 'a caption', { x: 0, y: 200, w: 400 })
 helpers.line('wide', 300, 180, 300, 250)
 helpers.line('struck', 30, 180, 30, 250)
+// A heading, a blank line and a subheading. `gap` runs across the blank row,
+// which holds no words.
+helpers.box('spaced', 'heading\n\nsubheading', { x: 600, y: 0, w: 240, h: 64 })
+const spaced = helpers.describe().shapes.find((shape) => shape.id === 'shape:spaced')
+const row = spaced.y + spaced.h / 2
+helpers.line('gap', spaced.x - 20, row, spaced.x + spaced.w + 20, row)
 return helpers.getLints()
