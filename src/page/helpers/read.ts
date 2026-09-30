@@ -23,7 +23,13 @@ import {
 } from "tldraw";
 
 import type { Lint, LintBinding, LintShape } from "./lints.js";
-import { heightForLabel, runLints, usableWidthAtBand } from "./lints.js";
+import {
+  heightForLabel,
+  pathTouchesRect,
+  runLints,
+  unboundStrokes,
+  usableWidthAtBand,
+} from "./lints.js";
 import { readDocumentMeta, type DiagramMeta } from "./meta.js";
 import type { Rect } from "./geometry.js";
 import { toShapeId, type ShapeKey } from "./ids.js";
@@ -234,6 +240,40 @@ function labelInkOf(
   shape: TLShape,
   boundsWidth: number,
 ): { width: number; centre: number } | undefined {
+  const lines = labelLinesOf(editor, shape, boundsWidth);
+  if (lines === undefined) return undefined;
+  let widest: LabelLine | undefined;
+  for (const line of lines) {
+    if (!widest || line.to - line.from > widest.to - widest.from) widest = line;
+  }
+  if (!widest) return undefined;
+  const width = widest.to - widest.from;
+  if (!(width > 0)) return undefined;
+  return { width, centre: LABEL_PADDING + (widest.from + widest.to) / 2 };
+}
+
+/** One rendered line of a label, against the measurement element's own box. */
+interface LabelLine {
+  from: number;
+  to: number;
+  top: number;
+  bottom: number;
+}
+
+/**
+ * The lines a geo label renders as, laid out by the browser at the shape's
+ * own width, or `undefined` when there is no text to lay out.
+ *
+ * Positions are against the measurement element, which sits one
+ * `LABEL_PADDING` inside the shape on the left whatever the alignment is (see
+ * {@link labelInkOf}). Whitespace spans are dropped, because a trailing space
+ * is not ink, and spans are grouped into lines by their top edge.
+ */
+function labelLinesOf(
+  editor: Editor,
+  shape: TLShape,
+  boundsWidth: number,
+): LabelLine[] | undefined {
   const text = plainTextOf(editor, shape);
   if (text.trim().length === 0) return undefined;
   const size = propOf<TLDefaultSizeStyle>(shape, "size");
@@ -255,26 +295,101 @@ function labelInkOf(
   });
 
   // Keyed on the top edge, which is what puts two spans on the same line.
-  const lines = new Map<number, { from: number; to: number }>();
+  const lines = new Map<number, LabelLine>();
   for (const span of spans) {
     if (span.text.trim().length === 0) continue;
     const key = Math.round(span.box.y);
     const line = lines.get(key);
+    const bottom = span.box.y + span.box.h;
     if (line) {
       line.from = Math.min(line.from, span.box.x);
       line.to = Math.max(line.to, span.box.x + span.box.w);
+      line.top = Math.min(line.top, span.box.y);
+      line.bottom = Math.max(line.bottom, bottom);
     } else {
-      lines.set(key, { from: span.box.x, to: span.box.x + span.box.w });
+      lines.set(key, { from: span.box.x, to: span.box.x + span.box.w, top: span.box.y, bottom });
     }
   }
-  let widest: { from: number; to: number } | undefined;
-  for (const line of lines.values()) {
-    if (!widest || line.to - line.from > widest.to - widest.from) widest = line;
+  return lines.size === 0 ? undefined : [...lines.values()];
+}
+
+/** A rectangle in a shape's own space, as its four corners in page space. */
+function toPageCorners(
+  editor: Editor,
+  shape: TLShape,
+  rect: { x: number; y: number; w: number; h: number },
+): { x: number; y: number }[] {
+  const transform = editor.getShapePageTransform(shape.id);
+  return [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+    { x: rect.x, y: rect.y + rect.h },
+  ].map((corner) => {
+    const point = transform.applyToPoint(corner);
+    return { x: point.x, y: point.y };
+  });
+}
+
+/**
+ * The box a shape's words occupy, as four page-space corners, or `undefined`
+ * when the shape has no text or no label to measure. For `line-crosses-label`.
+ *
+ * Not the label rectangle tldraw's geometry reports, which is the text plus a
+ * padding on every side and, on a geo, never narrower than 100 units: a tick
+ * label `t0` sits in a label rectangle four times its own width, and a leader
+ * passing through that empty space crosses no word. So each kind is read for
+ * its ink:
+ *
+ * - **geo**: the lines the browser lays the label out as, the same
+ *   measurement `unreadable-label` makes, placed across the shape by the
+ *   element's padding and down it by the label rectangle's centre, which is
+ *   where tldraw centres the block whichever `verticalAlign` put the
+ *   rectangle there.
+ * - **text**: the shape itself, whose geometry is its text with no padding.
+ * - **note** and **arrow** labels: the label rectangle less the padding tldraw
+ *   put around the text, since a note scales its font to fit and an arrow
+ *   label is sized to its text already.
+ */
+function textBoxOf(editor: Editor, shape: TLShape): { x: number; y: number }[] | undefined {
+  if (plainTextOf(editor, shape).trim().length === 0) return undefined;
+  const geometry = editor.getShapeGeometry(shape);
+
+  if (shape.type === "text") {
+    const box = geometry.bounds;
+    return toPageCorners(editor, shape, { x: box.minX, y: box.minY, w: box.width, h: box.height });
   }
-  if (!widest) return undefined;
-  const width = widest.to - widest.from;
-  if (!(width > 0)) return undefined;
-  return { width, centre: LABEL_PADDING + (widest.from + widest.to) / 2 };
+
+  if (!isGroup(geometry)) return undefined;
+  const label = geometry.children.find((child) => child.isLabel);
+  if (!label) return undefined;
+
+  if (shape.type === "geo") {
+    const lines = labelLinesOf(editor, shape, geometry.bounds.width);
+    if (lines === undefined) return undefined;
+    const from = Math.min(...lines.map((line) => line.from));
+    const to = Math.max(...lines.map((line) => line.to));
+    const height = Math.max(...lines.map((line) => line.bottom)) - Math.min(...lines.map((line) => line.top));
+    if (!(to > from) || !(height > 0)) return undefined;
+    const middle = label.bounds.minY + label.bounds.height / 2;
+    return toPageCorners(editor, shape, {
+      x: LABEL_PADDING + from,
+      y: middle - height / 2,
+      w: to - from,
+      h: height,
+    });
+  }
+
+  const padding = shape.type === "arrow" ? ARROW_LABEL_PADDING : LABEL_PADDING;
+  const w = label.bounds.width - padding * 2;
+  const h = label.bounds.height - padding * 2;
+  if (!(w > 0) || !(h > 0)) return undefined;
+  return toPageCorners(editor, shape, {
+    x: label.bounds.minX + padding,
+    y: label.bounds.minY + padding,
+    w,
+    h,
+  });
 }
 
 /**
@@ -483,7 +598,7 @@ export function collectLintRecords(editor: Editor): {
       parentId: shape.parentId,
     };
     if (bounds) record.bounds = bounds;
-    if (shape.type === "arrow") {
+    if (shape.type === "arrow" || shape.type === "line") {
       const path = pageVerticesOf(editor, shape);
       if (path.length >= 2) record.points = path;
     } else if (shape.type === "geo" || shape.type === "note") {
@@ -532,6 +647,24 @@ export function collectLintRecords(editor: Editor): {
         props: { terminal: binding.props.terminal },
       });
     }
+  }
+
+  // For `line-crosses-label`. Measuring a geo's text box lays its label out in
+  // the browser, so it is only done for a shape some unbound line's path comes
+  // near, and not at all on a page with no such line, which is most of them.
+  const strokes = unboundStrokes(shapes, bindings);
+  if (strokes.length > 0) {
+    shapes.forEach((record, index) => {
+      const shape = pageShapes[index];
+      if (!shape || !record.bounds || (record.text ?? "").trim().length === 0) return;
+      const bounds = record.bounds;
+      const near = strokes.some(
+        (stroke) => stroke.id !== record.id && stroke.points !== undefined && pathTouchesRect(stroke.points, bounds),
+      );
+      if (!near) return;
+      const box = textBoxOf(editor, shape);
+      if (box) record.textBox = box;
+    });
   }
   return { shapes, bindings };
 }

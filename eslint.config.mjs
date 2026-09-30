@@ -11,6 +11,10 @@ export default defineConfig([
     "dist/**",
     "coverage/**",
     "node_modules/**",
+    // Snippet fixtures are function bodies: `run` compiles each one inside an
+    // AsyncFunction, so a top-level `return` is correct there and a parse
+    // error to ESLint.
+    "test/fixtures/snippets/**",
   ]),
   js.configs.recommended,
   {

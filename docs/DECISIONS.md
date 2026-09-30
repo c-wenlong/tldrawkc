@@ -859,3 +859,55 @@ names, so without the `EXCLUDE` the page itself failed with
 **Rejected:** deleting `RTCPeerConnection`, `fetch` and friends in an init
 script, which a snippet undoes from a fresh iframe's globals; and CSP alone,
 which leaves navigations and WebRTC open.
+
+## D47. `line-crosses-label` is an error, tested against the words, and `line` does not mute it
+
+**Verdict:** a `line` shape, or an arrow not bound at both ends, that runs
+more than `LABEL_CROSSING_TOLERANCE` (4 page units) inside the box a label's
+words occupy is an error. The box is the text as the browser lays it out,
+not tldraw's label rectangle and not the shape's outline. `LINE_LINT_IGNORE`
+stays the two arrow rules, so `line` and `stub` are linted by it.
+
+**Why the words:** the failure is a stroke through letters. A leader is
+supposed to reach the box it labels, and an axis may run through a shape's
+outline or its padding without hiding anything. tldraw's label rectangle is
+the text plus 16 units of padding on every side and, on a geo, never less
+than 100 units wide, so a tick label `t0` sits in a rectangle four times its
+own width; testing that would fail lines that touch no word. So `read.ts`
+measures the lines with `measureTextSpans`, the same layout
+`unreadable-label` reads, and places them across the shape by the label
+padding and down it by the centre of tldraw's label rectangle. Checked by
+sweeping probe lines across a two-line label in a real Chrome: the rule fired
+from the tops of the capitals to the baseline and nowhere else. A text shape
+is its own text box, since its geometry has no padding; a note's and an
+arrow's labels are their label rectangles less the padding tldraw put there.
+
+**Why 4:** the text box includes each line's leading, about 4 units above and
+below at the default size, so a stroke centred 4 units in has half its width
+on the tops of the tallest letters and no more. It is also
+`ARROW_CROSSING_TOLERANCE`, arrived at the same way (D35), and like it the
+test is on depth, not length.
+
+**Why an error:** a word with a line through it is the same failure as two
+words on top of each other, which `overlapping-text` already fails, and the
+studio's gate has to refuse it: the timeline in self-learn#225 passed that
+gate with `inspect` exiting 0. The two warnings exist because every diagram
+drawn before those rules would have failed them (D36, D43). That is not true
+here: the rule can only fire on a line drawn over text, and the three
+diagrams in the owner's catalog export of 2026-09-29, with 40 lines and
+arrows between them, gave no finding at all.
+
+**Why bound arrows are left out:** a connection through a shape is already
+`arrow-crosses-shape`'s finding, and reporting it twice under two names is
+noise. A half-bound arrow is in, since `friendless-arrow` says nothing about
+where its loose end goes; the shape it is bound to is exempt.
+
+**Why `line` does not mute it:** D37 muted the arrow rules because they ask
+whether a connection is real, which a line never claims. This rule asks
+whether a line hides text, which is exactly the question for a line.
+`meta.lintIgnore: ['line-crosses-label']` is there for a strike-through drawn
+on purpose.
+
+**Cost:** measuring a geo's text box is the most expensive measurement in the
+pass, so the reader does it only for a shape some unbound line's path comes
+near, and not at all on a page with no such line.

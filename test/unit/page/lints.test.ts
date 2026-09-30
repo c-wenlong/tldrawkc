@@ -20,6 +20,10 @@ import {
   insetRect,
   intersectionArea,
   isContainer,
+  LABEL_CROSSING_TOLERANCE,
+  lineCrossesLabel,
+  pathTouchesRect,
+  unboundStrokes,
   isLintIgnored,
   LINT_RULES,
   OFF_PAGE_LIMIT,
@@ -478,6 +482,163 @@ describe("arrow-crosses-shape", () => {
     expect(arrowCrossesShape(shapes, BOUND).map((lint) => lint.shapeIds[1])).toEqual([
       "shape:aside",
     ]);
+  });
+});
+
+/** A rectangle as the four corners a measured text box arrives as. */
+const textAt = (x: number, y: number, w: number, h: number) => corners({ x, y, w, h });
+
+/**
+ * The timeline from self-learn#225: a box whose label wrapped to two lines,
+ * so its words now reach down to y = 170, and a dashed leader drawn from
+ * where the box used to end (y = 140) down to its tick.
+ */
+const TRANSFORMER: LintShape = {
+  id: "shape:t2017",
+  type: "geo",
+  text: "2017: The Transformer",
+  bounds: { x: 0, y: 60, w: 200, h: 126 },
+  textBox: textAt(30, 90, 140, 80),
+};
+const leader = (id: string, points: { x: number; y: number }[], extra: Partial<LintShape> = {}): LintShape => ({
+  id,
+  type: "arrow",
+  points,
+  meta: { lintIgnore: ["friendless-arrow", "arrow-crosses-shape"] },
+  ...extra,
+});
+
+describe("line-crosses-label", () => {
+  it("flags a leader that starts inside the words of a label that wrapped", () => {
+    const shapes = [TRANSFORMER, leader("shape:lead", [{ x: 100, y: 140 }, { x: 100, y: 300 }])];
+    const lints = lineCrossesLabel(shapes, []);
+    expect(lints).toHaveLength(1);
+    expect(lints[0]?.rule).toBe("line-crosses-label");
+    expect(lints[0]?.shapeIds).toEqual(["shape:lead", "shape:t2017"]);
+    expect(lints[0]?.severity).toBeUndefined();
+    expect(lints[0]?.message).toContain('"2017: The Transformer"');
+    expect(lints[0]?.message).toContain("End it at the shape's edge");
+  });
+
+  it("passes the same leader once it starts at the box's real edge", () => {
+    const shapes = [TRANSFORMER, leader("shape:lead", [{ x: 100, y: 186 }, { x: 100, y: 300 }])];
+    expect(lineCrossesLabel(shapes, [])).toEqual([]);
+  });
+
+  it("lets a line run through the outline and the padding, just not the words", () => {
+    // Down the left side of the box, inside its outline but left of the text,
+    // then across its bottom padding under the last line.
+    const shapes = [
+      TRANSFORMER,
+      leader("shape:edge", [
+        { x: 15, y: 40 },
+        { x: 15, y: 178 },
+        { x: 190, y: 178 },
+      ]),
+    ];
+    expect(lineCrossesLabel(shapes, [])).toEqual([]);
+  });
+
+  it("measures depth, so a graze stays quiet and a crossing past the tolerance fires", () => {
+    const at = (x: number) => [TRANSFORMER, leader("shape:lead", [{ x, y: 0 }, { x, y: 300 }])];
+    // The text box runs from x = 30; a line 2 units inside is ink at most.
+    expect(lineCrossesLabel(at(30 + LABEL_CROSSING_TOLERANCE - 2), [])).toEqual([]);
+    expect(lineCrossesLabel(at(30 + LABEL_CROSSING_TOLERANCE + 2), [])).toHaveLength(1);
+  });
+
+  it("takes tldraw's own line shape, and an arrow bound at one end only", () => {
+    const line: LintShape = { id: "shape:ruled", type: "line", points: [{ x: -20, y: 130 }, { x: 240, y: 130 }] };
+    expect(lineCrossesLabel([TRANSFORMER, line], []).map((lint) => lint.shapeIds[0])).toEqual(["shape:ruled"]);
+
+    const half: LintShape = { id: "shape:half", type: "arrow", points: [{ x: 100, y: 0 }, { x: 100, y: 300 }] };
+    const lints = lineCrossesLabel([TRANSFORMER, half], [bind("shape:half", "shape:other", "start")]);
+    expect(lints.map((lint) => lint.shapeIds[0])).toEqual(["shape:half"]);
+  });
+
+  it("leaves a connection to arrow-crosses-shape, and a half-bound arrow its own end", () => {
+    const through: LintShape = { id: "shape:x", type: "arrow", points: [{ x: 100, y: 0 }, { x: 100, y: 300 }] };
+    const both = [bind("shape:x", "shape:a", "start"), bind("shape:x", "shape:b", "end")];
+    expect(lineCrossesLabel([TRANSFORMER, through], both)).toEqual([]);
+
+    const own = [bind("shape:x", "shape:t2017", "start")];
+    expect(lineCrossesLabel([TRANSFORMER, through], own)).toEqual([]);
+  });
+
+  it("checks text shapes and other arrows' labels, never a line's own label", () => {
+    const caption: LintShape = { id: "shape:cap", type: "text", text: "t0", textBox: textAt(90, 220, 20, 24) };
+    const labelled = leader("shape:axis", [{ x: 0, y: 232 }, { x: 400, y: 232 }], {
+      text: "time",
+      textBox: textAt(180, 220, 40, 24),
+    });
+    const lints = lineCrossesLabel([caption, labelled], []);
+    expect(lints.map((lint) => lint.shapeIds)).toEqual([["shape:axis", "shape:cap"]]);
+  });
+
+  it("follows a rotated text box rather than the page box around it", () => {
+    // A square text box turned 45 degrees: a diamond whose page box has four
+    // empty corners. A line through one of those corners crosses no word.
+    const diamond = [
+      { x: 100, y: 0 },
+      { x: 200, y: 100 },
+      { x: 100, y: 200 },
+      { x: 0, y: 100 },
+    ];
+    const turned: LintShape = { id: "shape:turned", type: "geo", text: "rotated", textBox: diamond };
+    const corner = leader("shape:corner", [{ x: 0, y: 20 }, { x: 40, y: -20 }]);
+    const middle = leader("shape:middle", [{ x: 0, y: 100 }, { x: 200, y: 100 }]);
+    expect(lineCrossesLabel([turned, corner], [])).toEqual([]);
+    expect(lineCrossesLabel([turned, middle], [])).toHaveLength(1);
+  });
+
+  it("honours lintIgnore on the line, on the label, and a bare true", () => {
+    const through = [{ x: 100, y: 0 }, { x: 100, y: 300 }];
+    const mutedLine = leader("shape:lead", through, { meta: { lintIgnore: ["line-crosses-label"] } });
+    expect(lineCrossesLabel([TRANSFORMER, mutedLine], [])).toEqual([]);
+    expect(lineCrossesLabel([TRANSFORMER, leader("shape:lead", through, { meta: { lintIgnore: true } })], [])).toEqual([]);
+    const mutedLabel = { ...TRANSFORMER, meta: { lintIgnore: ["line-crosses-label"] } };
+    expect(lineCrossesLabel([mutedLabel, leader("shape:lead", through)], [])).toEqual([]);
+  });
+
+  it("is not muted by the default a line or stub carries", () => {
+    // D37 mutes the two arrow rules on a line; this one is the reason the
+    // default does not name it.
+    const shapes = [TRANSFORMER, leader("shape:lead", [{ x: 100, y: 0 }, { x: 100, y: 300 }])];
+    expect(lineCrossesLabel(shapes, [])).toHaveLength(1);
+  });
+
+  it("skips a label nobody measured, an empty one, and a line with no path", () => {
+    const unmeasured: LintShape = { ...TRANSFORMER, textBox: undefined };
+    const blank: LintShape = { ...TRANSFORMER, text: "  " };
+    const through = leader("shape:lead", [{ x: 100, y: 0 }, { x: 100, y: 300 }]);
+    expect(lineCrossesLabel([unmeasured, through], [])).toEqual([]);
+    expect(lineCrossesLabel([blank, through], [])).toEqual([]);
+    expect(lineCrossesLabel([TRANSFORMER, { id: "shape:bare", type: "line" }], [])).toEqual([]);
+  });
+
+  it("cuts a long label short in the message", () => {
+    const long: LintShape = { ...TRANSFORMER, text: "a label that goes on and on well past forty characters" };
+    const [lint] = lineCrossesLabel([long, leader("shape:lead", [{ x: 100, y: 0 }, { x: 100, y: 300 }])], []);
+    expect(lint?.message).toContain('"a label that goes on and on well past f…"');
+  });
+});
+
+describe("unboundStrokes and pathTouchesRect", () => {
+  it("keeps lines and arrows short of two bindings, with a path", () => {
+    const shapes: LintShape[] = [
+      { id: "shape:line", type: "line", points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] },
+      { id: "shape:loose", type: "arrow", points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] },
+      { id: "shape:bound", type: "arrow", points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] },
+      { id: "shape:nopath", type: "arrow" },
+      { id: "shape:box", type: "geo", points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] },
+    ];
+    const bindings = [bind("shape:bound", "shape:a", "start"), bind("shape:bound", "shape:b", "end")];
+    expect(unboundStrokes(shapes, bindings).map((shape) => shape.id)).toEqual(["shape:line", "shape:loose"]);
+  });
+
+  it("counts a leg that only reaches the rectangle's edge as near", () => {
+    const rect = { x: 0, y: 0, w: 100, h: 50 };
+    expect(pathTouchesRect([{ x: 50, y: -40 }, { x: 50, y: 0 }], rect)).toBe(true);
+    expect(pathTouchesRect([{ x: 50, y: -40 }, { x: 50, y: -10 }], rect)).toBe(false);
   });
 });
 
@@ -1242,6 +1403,8 @@ describe("runLints over every rule", () => {
       geo("shape:b", { x: 50, y: 0, w: 100, h: 100 }),
       geo("shape:blank", { x: 900, y: 0, w: 100, h: 60 }, { text: "" }),
       geo("shape:far", { x: 99999, y: 0, w: 100, h: 60 }),
+      { ...TRANSFORMER, bounds: { x: 2000, y: 60, w: 200, h: 126 }, textBox: textAt(2030, 90, 140, 80) },
+      leader("shape:lead", [{ x: 2100, y: 140 }, { x: 2100, y: 300 }]),
     ];
     const seen = runLints(shapes, []).map((lint) => lint.rule);
     const order = seen.map((rule) => LINT_RULES.indexOf(rule as (typeof LINT_RULES)[number]));
@@ -1249,6 +1412,7 @@ describe("runLints over every rule", () => {
     expect(new Set(seen)).toEqual(
       new Set([
         "friendless-arrow",
+        "line-crosses-label",
         "overlapping-text",
         "overlapping-shapes",
         "off-page",

@@ -227,7 +227,9 @@ joining two shapes is `connect` instead.
 
 It mutes `friendless-arrow` and `arrow-crosses-shape` by default, because
 neither rule means anything for geometry that never claimed to join two
-shapes; pass `lintIgnore: []` to have it linted like any other arrow. The id
+shapes; pass `lintIgnore: []` to have it linted like any other arrow. It does
+not mute `line-crosses-label`, which exists for exactly these marks: a line
+may cross a shape, never its words. The id
 is derived from the key, so re-running a snippet moves the line rather than
 stacking a second one on it.
 
@@ -405,14 +407,17 @@ without a second CLI round trip.
 
 ### `helpers.getLints()`
 
-Returns `Lint[]`, the same array the bridge's `lints()` returns. Nine rules:
+Returns `Lint[]`, the same array the bridge's `lints()` returns. Ten rules:
 six from v1, `arrow-crosses-shape` added in phase 3, `missing-topic` added
-alongside document metadata, and `missing-glyph` added in phase 4.
+alongside document metadata, `missing-glyph` added in phase 4, and
+`line-crosses-label` added after self-learn#225 found a leader line through a
+label that every other rule passed.
 
 | Rule | Fires when |
 | --- | --- |
 | `friendless-arrow` | An arrow has no binding at one or both ends and no `meta.lintIgnore` |
 | `arrow-crosses-shape` | An arrow's rendered path runs more than 4 page units inside a geo or note shape that is neither of the two it connects. Containers (`meta.container = true`) and the arrow's own parent are exempt |
+| `line-crosses-label` | A `line` shape, or an arrow not bound at both ends (which is what `line` and `stub` draw), runs more than 4 page units inside the box a label's words occupy. The words, not the outline or the padding around them. The line's own label, and a shape a half-bound arrow is bound to, are exempt |
 | `overlapping-text` | Two text-bearing shapes' label boxes intersect |
 | `overlapping-shapes` | Two geo shapes intersect by more than 10 percent of the smaller one's area. Shapes with `meta.container = true` (from `boxShapes`) are skipped on both sides of the pair. |
 | `off-page` | A shape sits further than `OFF_PAGE_LIMIT` (10000 page units) from the origin in any direction, positive or negative |
@@ -459,6 +464,23 @@ geometry the rule cannot model. `meta.lintIgnore: ['arrow-crosses-shape']` on
 either the arrow or the shape is the opt-out, and it is the right answer for a
 marker an arrow is meant to run through, such as a dot at the origin of a set
 of axes.
+
+`line-crosses-label` covers what `arrow-crosses-shape` leaves out: a mark
+that is not a connection. `line` and `stub` mute the arrow rules by default,
+because an axis runs through things on purpose (D37), and that let a
+timeline's dashed leader run straight through "2017: The Transformer": the
+label wrapped, the box grew down with `growY`, and the leader drawn from where
+the box was declared to end started inside the words. So the rule tests the
+words themselves. The text box is the lines the browser lays the label out as,
+not tldraw's label rectangle, which on a geo is padded and never narrower than
+100 units; a line may run inside an outline or through its padding, and only a
+stroke through the letters fires. The same 4-unit depth as
+`arrow-crosses-shape` applies, and at the default size it is the leading above
+and below a line of text, so a probe line fires from the tops of the capitals
+to the baseline and nowhere else. It is an error, and not muted by `line`'s
+default: see D47 in [DECISIONS.md](DECISIONS.md). The fix is almost always to
+start the line at the shape's edge as `helpers.describe()` reports it after
+the label is set, since `h` is only a minimum.
 
 `off-page` is not about clipping. Nothing clips at a large coordinate:
 `toImage` and `getSvgString` both framed a box at x = 200000 correctly. What
